@@ -60,6 +60,7 @@ struct MarkPopErrorOnReturn {
 
 // Define smart pointers for the most commonly used OpenSSL types:
 using X509Pointer = DeleteFnPtr<X509, X509_free>;
+using X509StorePointer = DeleteFnPtr<X509_STORE, X509_STORE_free>;
 using BIOPointer = DeleteFnPtr<BIO, BIO_free_all>;
 using SSLCtxPointer = DeleteFnPtr<SSL_CTX, SSL_CTX_free>;
 using SSLSessionPointer = DeleteFnPtr<SSL_SESSION, SSL_SESSION_free>;

@@ -111,9 +111,11 @@ static const char* const root_certs[] = {
 
 static const char system_cert_path[] = NODE_OPENSSL_SYSTEM_CERT_PATH;
 
-static X509_STORE* root_cert_store;
-static std::vector<X509*> root_certs_vector;
+static X509StorePointer root_cert_store;
+
+static std::vector<X509Pointer> root_certs_vector;
 static Mutex root_certs_vector_mutex;
+static bool root_certs_vector_loaded = false;
 
 static bool extra_root_certs_loaded = false;
 
@@ -973,37 +975,39 @@ void SecureContext::SetCert(const FunctionCallbackInfo<Value>& args) {
 static void EnsureRootCerts() {
   Mutex::ScopedLock lock(root_certs_vector_mutex);
 
-  if (root_certs_vector.empty()) {
+  if (!root_certs_vector_loaded) {
     for (size_t i = 0; i < arraysize(root_certs); i++) {
-      X509* x509 =
+      X509Pointer x509 = X509Pointer(
           PEM_read_bio_X509(NodeBIO::NewFixed(root_certs[i],
                                               strlen(root_certs[i])).get(),
                             nullptr,   // no re-use of X509 structure
                             NoPasswordCallback,
-                            nullptr);  // no callback data
+                            nullptr));  // no callback data
 
       // Parse errors from the built-in roots are fatal.
       CHECK_NOT_NULL(x509);
 
-      root_certs_vector.push_back(x509);
+      root_certs_vector.push_back(std::move(x509));
     }
+
+    root_certs_vector_loaded = true;
   }
 }
 
 
-static X509_STORE* NewRootCertStore() {
+static X509StorePointer NewRootCertStore() {
   EnsureRootCerts();
 
-  X509_STORE* store = X509_STORE_new();
+  X509StorePointer store = X509StorePointer(X509_STORE_new());
   if (*system_cert_path != '\0') {
-    X509_STORE_load_locations(store, system_cert_path, nullptr);
+    X509_STORE_load_locations(store.get(), system_cert_path, nullptr);
   }
   if (per_process::cli_options->ssl_openssl_cert_store) {
-    X509_STORE_set_default_paths(store);
+    X509_STORE_set_default_paths(store.get());
   } else {
     Mutex::ScopedLock lock(root_certs_vector_mutex);
-    for (X509* cert : root_certs_vector) {
-      X509_STORE_add_cert(store, cert);
+    for (X509Pointer& cert : root_certs_vector) {
+      X509_STORE_add_cert(store.get(), cert.get());
     }
   }
 
@@ -1027,15 +1031,14 @@ void SecureContext::AddCACert(const FunctionCallbackInfo<Value>& args) {
     return;
 
   X509_STORE* cert_store = SSL_CTX_get_cert_store(sc->ctx_.get());
-  while (X509* x509 = PEM_read_bio_X509_AUX(
-      bio.get(), nullptr, NoPasswordCallback, nullptr)) {
-    if (cert_store == root_cert_store) {
-      cert_store = NewRootCertStore();
+  while (X509Pointer x509 = X509Pointer(PEM_read_bio_X509_AUX(
+      bio.get(), nullptr, NoPasswordCallback, nullptr))) {
+    if (cert_store == root_cert_store.get()) {
+      cert_store = NewRootCertStore().release();
       SSL_CTX_set_cert_store(sc->ctx_.get(), cert_store);
     }
-    X509_STORE_add_cert(cert_store, x509);
-    SSL_CTX_add_client_CA(sc->ctx_.get(), x509);
-    X509_free(x509);
+    X509_STORE_add_cert(cert_store, x509.get());
+    SSL_CTX_add_client_CA(sc->ctx_.get(), x509.get());
   }
 }
 
@@ -1063,8 +1066,8 @@ void SecureContext::AddCRL(const FunctionCallbackInfo<Value>& args) {
     return env->ThrowError("Failed to parse CRL");
 
   X509_STORE* cert_store = SSL_CTX_get_cert_store(sc->ctx_.get());
-  if (cert_store == root_cert_store) {
-    cert_store = NewRootCertStore();
+  if (cert_store == root_cert_store.get()) {
+    cert_store = NewRootCertStore().release();
     SSL_CTX_set_cert_store(sc->ctx_.get(), cert_store);
   }
 
@@ -1086,10 +1089,10 @@ static unsigned long AddRootCertsFromFile(  // NOLINT(runtime/int)
   // Scope for root_certs_vector lock
   {
     Mutex::ScopedLock lock(root_certs_vector_mutex);
-    while (X509* x509 =
-        PEM_read_bio_X509(bio.get(), nullptr, NoPasswordCallback, nullptr)) {
-      X509_STORE_add_cert(root_cert_store, x509);
-      root_certs_vector.push_back(x509);
+    while (X509Pointer x509 = X509Pointer(
+        PEM_read_bio_X509(bio.get(), nullptr, NoPasswordCallback, nullptr))) {
+      X509_STORE_add_cert(root_cert_store.get(), x509.get());
+      root_certs_vector.push_back(std::move(x509));
     }
   }
 
@@ -1142,8 +1145,8 @@ void SecureContext::AddRootCerts(const FunctionCallbackInfo<Value>& args) {
   }
 
   // Increment reference count so global store is not deleted along with CTX.
-  X509_STORE_up_ref(root_cert_store);
-  SSL_CTX_set_cert_store(sc->ctx_.get(), root_cert_store);
+  X509_STORE_up_ref(root_cert_store.get());
+  SSL_CTX_set_cert_store(sc->ctx_.get(), root_cert_store.get());
 }
 
 
@@ -1442,8 +1445,8 @@ void SecureContext::LoadPKCS12(const FunctionCallbackInfo<Value>& args) {
     for (int i = 0; i < sk_X509_num(extra_certs.get()); i++) {
       X509* ca = sk_X509_value(extra_certs.get(), i);
 
-      if (cert_store == root_cert_store) {
-        cert_store = NewRootCertStore();
+      if (cert_store == root_cert_store.get()) {
+        cert_store = NewRootCertStore().release();
         SSL_CTX_set_cert_store(sc->ctx_.get(), cert_store);
       }
       X509_STORE_add_cert(cert_store, ca);
@@ -6648,9 +6651,9 @@ void GetRootCertificates(const FunctionCallbackInfo<Value>& args) {
 
     result.reserve(root_certs_vector.size());
 
-    for (X509* cert : root_certs_vector) {
+    for (X509Pointer& cert : root_certs_vector) {
       Local<Value> value;
-      if (!X509ToPEM(env, cert).ToLocal(&value))
+      if (!X509ToPEM(env, cert.get()).ToLocal(&value))
         return;
 
       result.push_back(value);
@@ -6659,6 +6662,55 @@ void GetRootCertificates(const FunctionCallbackInfo<Value>& args) {
 
   args.GetReturnValue().Set(
       Array::New(env->isolate(), result.data(), result.size()));
+}
+
+
+void SetRootCertificates(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+
+  // Single argument must be an array of PEM-formatted strings.
+  CHECK_EQ(args.Length(), 1);
+  CHECK(args[0]->IsArray());
+  Local<Array> arr = args[0].As<Array>();
+  size_t len = arr->Length();
+
+  ERR_clear_error();
+  ClearErrorOnReturn clear_error_on_return;
+
+  std::vector<X509Pointer> certs;
+  certs.reserve(len);
+
+  for (size_t i = 0; i < len; i++) {
+    // All array values must be strings.
+    Local<Value> value;
+    if (!arr->Get(env->context(), i).ToLocal(&value)) return;
+    CHECK(value->IsString());
+
+    BIOPointer bio(LoadBIO(env, value));
+    if (!bio) return ThrowCryptoError(env, ERR_get_error(), "LoadBIO");
+
+    // Each string can contain multiple PEM-formatted certificates.
+    while (X509Pointer x509 = X509Pointer(
+        PEM_read_bio_X509(bio.get(), nullptr, NoPasswordCallback, nullptr))) {
+      certs.push_back(std::move(x509));
+    }
+
+    // Ignore error if its EOF/no start line found.
+    unsigned long err = ERR_peek_last_error();  // NOLINT(runtime/int)
+    if (ERR_GET_LIB(err) != ERR_LIB_PEM ||
+        ERR_GET_REASON(err) != PEM_R_NO_START_LINE) {
+      return ThrowCryptoError(env, err, "PEM_read_bio_X509");
+    }
+  }
+
+  // Scope for root_certs_vector lock
+  {
+    Mutex::ScopedLock lock(root_certs_vector_mutex);
+    root_certs_vector = std::move(certs);
+  }
+
+  // A new root_cert_store will be built on next use.
+  root_cert_store = nullptr;
 }
 
 
@@ -6878,6 +6930,7 @@ void Initialize(Local<Object> target,
   env->SetMethodNoSideEffect(target, "certExportChallenge", ExportChallenge);
   env->SetMethodNoSideEffect(target, "getRootCertificates",
                              GetRootCertificates);
+  env->SetMethod(target, "setRootCertificates", SetRootCertificates);
   // Exposed for testing purposes only.
   env->SetMethodNoSideEffect(target, "isExtraRootCertsFileLoaded",
                              IsExtraRootCertsFileLoaded);
