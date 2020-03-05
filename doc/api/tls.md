@@ -1775,6 +1775,20 @@ An immutable array of strings representing the root certificates (in PEM format)
 used for verifying peer certificates. This is the default value of the `ca`
 option to [`tls.createSecureContext()`][].
 
+`tls.rootCertificates` can be assigned a new value to change the root
+certificates used used for all subsequent peer certificate verifications.
+Existing secure connections are not affected.
+
+The following illustrates adding an extra certificate to the default set of
+well known "root" CAs:
+
+```sh
+tls.rootCertificates = [
+  ...tls.rootCertificates,
+  fs.readFileSync('custom-ca.pem')
+];
+```
+
 ## `tls.DEFAULT_ECDH_CURVE`
 <!-- YAML
 added: v0.11.13

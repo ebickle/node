@@ -1018,6 +1018,53 @@ void GetRootCertificates(const FunctionCallbackInfo<Value>& args) {
 }
 
 
+void SetRootCertificates(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);  
+
+  // Single argument must be an array of PEM-formatted strings.
+  CHECK_EQ(args.Length(), 1);  
+  CHECK(args[0]->IsArray());
+  Local<Array> arr = args[0].As<Array>();
+  size_t len = arr->Length();
+
+  ERR_clear_error();
+  ClearErrorOnReturn clear_error_on_return;
+
+  X509StorePointer store(X509_STORE_new());
+
+  for (size_t i = 0; i < len; i++) {
+    // All array values must be strings.
+    Local<Value> value;
+    if (!arr->Get(env->context(), i).ToLocal(&value)) return;
+    CHECK(value->IsString());
+
+    BIOPointer bio(LoadBIO(env, value));
+    if (!bio) return ThrowCryptoError(env, ERR_get_error(), "LoadBIO");
+
+    // Each string can contain multiple PEM-formatted certificates.
+    while (X509Pointer x509 = X509Pointer(
+        PEM_read_bio_X509(bio.get(), nullptr, NoPasswordCallback, nullptr))) {
+      if (X509_STORE_add_cert(store.get(), x509.get()) == 0) {
+        return ThrowCryptoError(env, ERR_get_error(), "X509_STORE_add_cert");  
+      }
+    }
+
+    // Ignore error if its EOF/no start line found.
+    unsigned long err = ERR_peek_last_error();  // NOLINT(runtime/int)
+    if (ERR_GET_LIB(err) != ERR_LIB_PEM ||
+        ERR_GET_REASON(err) != PEM_R_NO_START_LINE) {
+      return ThrowCryptoError(env, err, "PEM_read_bio_X509");
+    }
+  }
+
+  if (root_cert_store != nullptr) {
+    X509_STORE_free(root_cert_store);
+  }
+
+  root_cert_store = store.release();
+}
+
+
 void SecureContext::AddCACert(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
@@ -6890,6 +6937,7 @@ void Initialize(Local<Object> target,
   env->SetMethodNoSideEffect(target, "certExportChallenge", ExportChallenge);
   env->SetMethodNoSideEffect(target, "getRootCertificates",
                              GetRootCertificates);
+  env->SetMethod(target, "setRootCertificates", SetRootCertificates);
   // Exposed for testing purposes only.
   env->SetMethodNoSideEffect(target, "isExtraRootCertsFileLoaded",
                              IsExtraRootCertsFileLoaded);
