@@ -1312,7 +1312,7 @@ unsigned long AddCertsFromFile(  // NOLINT(runtime/int)
 
   while (X509Pointer x509 = X509Pointer(
       PEM_read_bio_X509(bio.get(), nullptr, NoPasswordCallback, nullptr))) {
-    certs.push_back(std::move(x509));
+    certs->push_back(std::move(x509));
   }
 
   unsigned long err = ERR_peek_error();  // NOLINT(runtime/int)
