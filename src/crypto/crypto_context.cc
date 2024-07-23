@@ -9,7 +9,6 @@
 #include "node.h"
 #include "node_buffer.h"
 #include "node_options.h"
-#include "node_process-inl.h"
 #include "util.h"
 #include "v8.h"
 
