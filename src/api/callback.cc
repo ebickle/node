@@ -97,10 +97,9 @@ void InternalCallbackScope::Close() {
   if (closed_) return;
   closed_ = true;
 
-  Isolate* isolate = env_->isolate();
-  auto idle = OnScopeLeave([&]() { isolate->SetIdle(true); });
+  // This function must ends up with either cleanup the
+  // async id stack or pop the topmost one from it
 
-  if (!env_->can_call_into_js()) return;
   auto perform_stopping_check = [&]() {
     if (env_->is_stopping()) {
       MarkAsFailed();
@@ -108,6 +107,11 @@ void InternalCallbackScope::Close() {
     }
   };
   perform_stopping_check();
+
+  if (env_->is_stopping()) return;
+
+  Isolate* isolate = env_->isolate();
+  auto idle = OnScopeLeave([&]() { isolate->SetIdle(true); });
 
   if (!failed_ && async_context_.async_id != 0 && !skip_hooks_) {
     AsyncWrap::EmitAfter(env_, async_context_.async_id);
@@ -244,8 +248,7 @@ MaybeLocal<Value> MakeCallback(Isolate* isolate,
                                Local<Value> argv[],
                                async_context asyncContext) {
   // Check can_call_into_js() first because calling Get() might do so.
-  Environment* env =
-      Environment::GetCurrent(recv->GetCreationContext().ToLocalChecked());
+  Environment* env = Environment::GetCurrent(recv->GetCreationContextChecked());
   CHECK_NOT_NULL(env);
   if (!env->can_call_into_js()) return Local<Value>();
 
@@ -275,7 +278,7 @@ MaybeLocal<Value> MakeCallback(Isolate* isolate,
   // Because of the AssignToContext() call in src/node_contextify.cc,
   // the two contexts need not be the same.
   Environment* env =
-      Environment::GetCurrent(callback->GetCreationContext().ToLocalChecked());
+      Environment::GetCurrent(callback->GetCreationContextChecked());
   CHECK_NOT_NULL(env);
   Context::Scope context_scope(env->context());
   MaybeLocal<Value> ret =
@@ -298,7 +301,7 @@ MaybeLocal<Value> MakeSyncCallback(Isolate* isolate,
                                    int argc,
                                    Local<Value> argv[]) {
   Environment* env =
-      Environment::GetCurrent(callback->GetCreationContext().ToLocalChecked());
+      Environment::GetCurrent(callback->GetCreationContextChecked());
   CHECK_NOT_NULL(env);
   if (!env->can_call_into_js()) return Local<Value>();
 

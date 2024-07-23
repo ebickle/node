@@ -6,7 +6,7 @@ if (!common.hasCrypto)
   common.skip('missing crypto');
 
 const assert = require('assert');
-const { subtle } = require('crypto').webcrypto;
+const { subtle } = globalThis.crypto;
 
 function getDeriveKeyInfo(name, length, hash, ...usages) {
   return [{ name, length, hash }, usages];
@@ -272,6 +272,11 @@ async function testDeriveBitsBadLengths(
         name: 'OperationError',
       }),
     assert.rejects(
+      subtle.deriveBits(algorithm, baseKeys[size]), {
+        message: 'length cannot be null',
+        name: 'OperationError',
+      }),
+    assert.rejects(
       subtle.deriveBits(algorithm, baseKeys[size], 15), {
         message: /length must be a multiple of 8/,
         name: 'OperationError',
@@ -296,7 +301,8 @@ async function testDeriveBitsBadHash(
           ...algorithm,
           hash: hash.substring(0, 3) + hash.substring(4)
         }, baseKeys[size], 256), {
-        message: /Unrecognized name/
+        message: /Unrecognized algorithm name/,
+        name: 'NotSupportedError',
       }),
     assert.rejects(
       subtle.deriveBits(
@@ -305,7 +311,8 @@ async function testDeriveBitsBadHash(
           hash: 'PBKDF2'
         },
         baseKeys[size], 256), {
-        message: /Unrecognized name/
+        message: /Unrecognized algorithm name/,
+        name: 'NotSupportedError',
       }),
   ]);
 }
@@ -343,7 +350,7 @@ async function testDeriveBitsMissingSalt(
 
   return assert.rejects(
     subtle.deriveBits(algorithm, baseKeys[size], 0), {
-      code: 'ERR_INVALID_ARG_TYPE'
+      code: 'ERR_MISSING_OPTION'
     });
 }
 
@@ -361,7 +368,7 @@ async function testDeriveBitsMissingInfo(
 
   return assert.rejects(
     subtle.deriveBits(algorithm, baseKeys[size], 0), {
-      code: 'ERR_INVALID_ARG_TYPE'
+      code: 'ERR_MISSING_OPTION'
     });
 }
 
@@ -435,7 +442,10 @@ async function testDeriveKeyBadHash(
         keyType,
         true,
         usages),
-      { message: /Unrecognized name/ }),
+      {
+        message: /Unrecognized algorithm name/,
+        name: 'NotSupportedError',
+      }),
     assert.rejects(
       subtle.deriveKey(
         {
@@ -446,7 +456,10 @@ async function testDeriveKeyBadHash(
         keyType,
         true,
         usages),
-      { message: /Unrecognized name/ }),
+      {
+        message: /Unrecognized algorithm name/,
+        name: 'NotSupportedError',
+      }),
   ]);
 }
 

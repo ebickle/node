@@ -28,7 +28,10 @@
 #include "node_errors.h"
 #include "node_external_reference.h"
 #include "node_internals.h"
+#include "node_process.h"
+#include "node_sea.h"
 #include "node_snapshot_builder.h"
+#include "node_url.h"
 #include "node_watchdog.h"
 #include "util-inl.h"
 
@@ -47,18 +50,24 @@ using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
 using v8::IndexedPropertyHandlerConfiguration;
+using v8::IndexFilter;
 using v8::Int32;
+using v8::Integer;
+using v8::Intercepted;
 using v8::Isolate;
+using v8::Just;
+using v8::KeyCollectionMode;
 using v8::Local;
 using v8::Maybe;
 using v8::MaybeLocal;
 using v8::MeasureMemoryExecution;
 using v8::MeasureMemoryMode;
+using v8::Message;
 using v8::MicrotaskQueue;
 using v8::MicrotasksPolicy;
 using v8::Name;
 using v8::NamedPropertyHandlerConfiguration;
-using v8::Number;
+using v8::Nothing;
 using v8::Object;
 using v8::ObjectTemplate;
 using v8::PrimitiveArray;
@@ -66,16 +75,16 @@ using v8::Promise;
 using v8::PropertyAttribute;
 using v8::PropertyCallbackInfo;
 using v8::PropertyDescriptor;
+using v8::PropertyFilter;
 using v8::PropertyHandlerFlags;
 using v8::Script;
 using v8::ScriptCompiler;
 using v8::ScriptOrigin;
 using v8::String;
+using v8::Symbol;
 using v8::Uint32;
 using v8::UnboundScript;
 using v8::Value;
-using v8::WeakCallbackInfo;
-using v8::WeakCallbackType;
 
 // The vm module executes code in a sandboxed environment with a different
 // global object than the rest of the code. This is achieved by applying
@@ -108,20 +117,15 @@ Local<Name> Uint32ToName(Local<Context> context, uint32_t index) {
 }  // anonymous namespace
 
 BaseObjectPtr<ContextifyContext> ContextifyContext::New(
-    Environment* env,
-    Local<Object> sandbox_obj,
-    const ContextOptions& options) {
+    Environment* env, Local<Object> sandbox_obj, ContextOptions* options) {
   HandleScope scope(env->isolate());
-  InitializeGlobalTemplates(env->isolate_data());
   Local<ObjectTemplate> object_template = env->contextify_global_template();
   DCHECK(!object_template.IsEmpty());
-  bool use_node_snapshot = per_process::cli_options->node_snapshot;
-  const SnapshotData* snapshot_data =
-      use_node_snapshot ? SnapshotBuilder::GetEmbeddedSnapshotData() : nullptr;
+  const SnapshotData* snapshot_data = env->isolate_data()->snapshot_data();
 
   MicrotaskQueue* queue =
-      options.microtask_queue_wrap
-          ? options.microtask_queue_wrap->microtask_queue().get()
+      options->own_microtask_queue
+          ? options->own_microtask_queue.get()
           : env->isolate()->GetCurrentContext()->GetMicrotaskQueue();
 
   Local<Context> v8_context;
@@ -133,19 +137,16 @@ BaseObjectPtr<ContextifyContext> ContextifyContext::New(
   return New(v8_context, env, sandbox_obj, options);
 }
 
-void ContextifyContext::MemoryInfo(MemoryTracker* tracker) const {
-  if (microtask_queue_wrap_) {
-    tracker->TrackField("microtask_queue_wrap",
-                        microtask_queue_wrap_->object());
-  }
-}
+void ContextifyContext::MemoryInfo(MemoryTracker* tracker) const {}
 
 ContextifyContext::ContextifyContext(Environment* env,
                                      Local<Object> wrapper,
                                      Local<Context> v8_context,
-                                     const ContextOptions& options)
+                                     ContextOptions* options)
     : BaseObject(env, wrapper),
-      microtask_queue_wrap_(options.microtask_queue_wrap) {
+      microtask_queue_(options->own_microtask_queue
+                           ? options->own_microtask_queue.release()
+                           : nullptr) {
   context_.Reset(env->isolate(), v8_context);
   // This should only be done after the initial initializations of the context
   // global object is finished.
@@ -164,15 +165,11 @@ ContextifyContext::~ContextifyContext() {
   Isolate* isolate = env()->isolate();
   HandleScope scope(isolate);
 
-  env()->async_hooks()
-    ->RemoveContext(PersistentToLocal::Weak(isolate, context_));
+  env()->UnassignFromContext(PersistentToLocal::Weak(isolate, context_));
   context_.Reset();
 }
 
 void ContextifyContext::InitializeGlobalTemplates(IsolateData* isolate_data) {
-  if (!isolate_data->contextify_global_template().IsEmpty()) {
-    return;
-  }
   DCHECK(isolate_data->contextify_wrapper_template().IsEmpty());
   Local<FunctionTemplate> global_func_template =
       FunctionTemplate::New(isolate_data->isolate());
@@ -182,20 +179,22 @@ void ContextifyContext::InitializeGlobalTemplates(IsolateData* isolate_data) {
   NamedPropertyHandlerConfiguration config(
       PropertyGetterCallback,
       PropertySetterCallback,
-      PropertyDescriptorCallback,
+      PropertyQueryCallback,
       PropertyDeleterCallback,
       PropertyEnumeratorCallback,
       PropertyDefinerCallback,
+      PropertyDescriptorCallback,
       {},
       PropertyHandlerFlags::kHasNoSideEffect);
 
   IndexedPropertyHandlerConfiguration indexed_config(
       IndexedPropertyGetterCallback,
       IndexedPropertySetterCallback,
-      IndexedPropertyDescriptorCallback,
+      IndexedPropertyQueryCallback,
       IndexedPropertyDeleterCallback,
-      PropertyEnumeratorCallback,
+      IndexedPropertyEnumeratorCallback,
       IndexedPropertyDefinerCallback,
+      IndexedPropertyDescriptorCallback,
       {},
       PropertyHandlerFlags::kHasNoSideEffect);
 
@@ -219,21 +218,24 @@ MaybeLocal<Context> ContextifyContext::CreateV8Context(
 
   Local<Context> ctx;
   if (snapshot_data == nullptr) {
-    ctx = Context::New(isolate,
-                       nullptr,  // extensions
-                       object_template,
-                       {},  // global object
-                       {},  // deserialization callback
-                       queue);
+    ctx = Context::New(
+        isolate,
+        nullptr,  // extensions
+        object_template,
+        {},                                       // global object
+        v8::DeserializeInternalFieldsCallback(),  // deserialization callback
+        queue);
     if (ctx.IsEmpty() || InitializeBaseContextForSnapshot(ctx).IsNothing()) {
       return MaybeLocal<Context>();
     }
-  } else if (!Context::FromSnapshot(isolate,
-                                    SnapshotData::kNodeVMContextIndex,
-                                    {},       // deserialization callback
-                                    nullptr,  // extensions
-                                    {},       // global object
-                                    queue)
+  } else if (!Context::FromSnapshot(
+                  isolate,
+                  SnapshotData::kNodeVMContextIndex,
+                  v8::DeserializeInternalFieldsCallback(),  // deserialization
+                                                            // callback
+                  nullptr,                                  // extensions
+                  {},                                       // global object
+                  queue)
                   .ToLocal(&ctx)) {
     return MaybeLocal<Context>();
   }
@@ -245,10 +247,10 @@ BaseObjectPtr<ContextifyContext> ContextifyContext::New(
     Local<Context> v8_context,
     Environment* env,
     Local<Object> sandbox_obj,
-    const ContextOptions& options) {
+    ContextOptions* options) {
   HandleScope scope(env->isolate());
   // This only initializes part of the context. The primordials are
-  // only initilaized when needed because even deserializing them slows
+  // only initialized when needed because even deserializing them slows
   // things down significantly and they are only needed in rare occasions
   // in the vm contexts.
   if (InitializeContextRuntime(v8_context).IsNothing()) {
@@ -273,14 +275,14 @@ BaseObjectPtr<ContextifyContext> ContextifyContext::New(
   v8_context->AllowCodeGenerationFromStrings(false);
   v8_context->SetEmbedderData(
       ContextEmbedderIndex::kAllowCodeGenerationFromStrings,
-      options.allow_code_gen_strings);
+      options->allow_code_gen_strings);
   v8_context->SetEmbedderData(ContextEmbedderIndex::kAllowWasmCodeGeneration,
-                              options.allow_code_gen_wasm);
+                              options->allow_code_gen_wasm);
 
-  Utf8Value name_val(env->isolate(), options.name);
+  Utf8Value name_val(env->isolate(), options->name);
   ContextInfo info(*name_val);
-  if (!options.origin.IsEmpty()) {
-    Utf8Value origin_val(env->isolate(), options.origin);
+  if (!options->origin.IsEmpty()) {
+    Utf8Value origin_val(env->isolate(), options->origin);
     info.origin = *origin_val;
   }
 
@@ -299,6 +301,19 @@ BaseObjectPtr<ContextifyContext> ContextifyContext::New(
             .IsNothing()) {
       return BaseObjectPtr<ContextifyContext>();
     }
+
+    // Assign host_defined_options_id to the global object so that in the
+    // callback of ImportModuleDynamically, we can get the
+    // host_defined_options_id from the v8::Context without accessing the
+    // wrapper object.
+    if (new_context_global
+            ->SetPrivate(v8_context,
+                         env->host_defined_option_symbol(),
+                         options->host_defined_options_id)
+            .IsNothing()) {
+      return BaseObjectPtr<ContextifyContext>();
+    }
+
     env->AssignToContext(v8_context, nullptr, info);
 
     if (!env->contextify_wrapper_template()
@@ -319,40 +334,52 @@ BaseObjectPtr<ContextifyContext> ContextifyContext::New(
           .IsNothing()) {
     return BaseObjectPtr<ContextifyContext>();
   }
+  // Assign host_defined_options_id to the sandbox object so that module
+  // callbacks like importModuleDynamically can be registered once back to the
+  // JS land.
+  if (sandbox_obj
+          ->SetPrivate(v8_context,
+                       env->host_defined_option_symbol(),
+                       options->host_defined_options_id)
+          .IsNothing()) {
+    return BaseObjectPtr<ContextifyContext>();
+  }
 
   return result;
 }
 
-void ContextifyContext::Init(Environment* env, Local<Object> target) {
-  Local<Context> context = env->context();
-  SetMethod(context, target, "makeContext", MakeContext);
-  SetMethod(context, target, "isContext", IsContext);
-  SetMethod(context, target, "compileFunction", CompileFunction);
+void ContextifyContext::CreatePerIsolateProperties(
+    IsolateData* isolate_data, Local<ObjectTemplate> target) {
+  Isolate* isolate = isolate_data->isolate();
+  SetMethod(isolate, target, "makeContext", MakeContext);
+  SetMethod(isolate, target, "compileFunction", CompileFunction);
 }
 
 void ContextifyContext::RegisterExternalReferences(
     ExternalReferenceRegistry* registry) {
   registry->Register(MakeContext);
-  registry->Register(IsContext);
   registry->Register(CompileFunction);
+  registry->Register(PropertyQueryCallback);
   registry->Register(PropertyGetterCallback);
   registry->Register(PropertySetterCallback);
   registry->Register(PropertyDescriptorCallback);
   registry->Register(PropertyDeleterCallback);
   registry->Register(PropertyEnumeratorCallback);
   registry->Register(PropertyDefinerCallback);
+  registry->Register(IndexedPropertyQueryCallback);
   registry->Register(IndexedPropertyGetterCallback);
   registry->Register(IndexedPropertySetterCallback);
   registry->Register(IndexedPropertyDescriptorCallback);
   registry->Register(IndexedPropertyDeleterCallback);
   registry->Register(IndexedPropertyDefinerCallback);
+  registry->Register(IndexedPropertyEnumeratorCallback);
 }
 
 // makeContext(sandbox, name, origin, strings, wasm);
 void ContextifyContext::MakeContext(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
-  CHECK_EQ(args.Length(), 6);
+  CHECK_EQ(args.Length(), 7);
   CHECK(args[0]->IsObject());
   Local<Object> sandbox = args[0].As<Object>();
 
@@ -378,42 +405,23 @@ void ContextifyContext::MakeContext(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[4]->IsBoolean());
   options.allow_code_gen_wasm = args[4].As<Boolean>();
 
-  if (args[5]->IsObject() &&
-      !env->microtask_queue_ctor_template().IsEmpty() &&
-      env->microtask_queue_ctor_template()->HasInstance(args[5])) {
-    options.microtask_queue_wrap.reset(
-        Unwrap<MicrotaskQueueWrap>(args[5].As<Object>()));
+  if (args[5]->IsBoolean() && args[5]->BooleanValue(env->isolate())) {
+    options.own_microtask_queue =
+        MicrotaskQueue::New(env->isolate(), MicrotasksPolicy::kExplicit);
   }
+
+  CHECK(args[6]->IsSymbol());
+  options.host_defined_options_id = args[6].As<Symbol>();
 
   TryCatchScope try_catch(env);
   BaseObjectPtr<ContextifyContext> context_ptr =
-      ContextifyContext::New(env, sandbox, options);
+      ContextifyContext::New(env, sandbox, &options);
 
   if (try_catch.HasCaught()) {
     if (!try_catch.HasTerminated())
       try_catch.ReThrow();
     return;
   }
-}
-
-
-void ContextifyContext::IsContext(const FunctionCallbackInfo<Value>& args) {
-  Environment* env = Environment::GetCurrent(args);
-
-  CHECK(args[0]->IsObject());
-  Local<Object> sandbox = args[0].As<Object>();
-
-  Maybe<bool> result =
-      sandbox->HasPrivate(env->context(),
-                          env->contextify_context_private_symbol());
-  args.GetReturnValue().Set(result.FromJust());
-}
-
-
-void ContextifyContext::WeakCallback(
-    const WeakCallbackInfo<ContextifyContext>& data) {
-  ContextifyContext* context = data.GetParameter();
-  delete context;
 }
 
 // static
@@ -453,16 +461,65 @@ bool ContextifyContext::IsStillInitializing(const ContextifyContext* ctx) {
 }
 
 // static
-void ContextifyContext::PropertyGetterCallback(
-    Local<Name> property,
-    const PropertyCallbackInfo<Value>& args) {
+Intercepted ContextifyContext::PropertyQueryCallback(
+    Local<Name> property, const PropertyCallbackInfo<Integer>& args) {
   ContextifyContext* ctx = ContextifyContext::Get(args);
 
   // Still initializing
-  if (IsStillInitializing(ctx)) return;
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
 
   Local<Context> context = ctx->context();
   Local<Object> sandbox = ctx->sandbox();
+
+  PropertyAttribute attr;
+
+  Maybe<bool> maybe_has = sandbox->HasRealNamedProperty(context, property);
+  if (maybe_has.IsNothing()) {
+    return Intercepted::kNo;
+  } else if (maybe_has.FromJust()) {
+    Maybe<PropertyAttribute> maybe_attr =
+        sandbox->GetRealNamedPropertyAttributes(context, property);
+    if (!maybe_attr.To(&attr)) {
+      return Intercepted::kNo;
+    }
+    args.GetReturnValue().Set(attr);
+    return Intercepted::kYes;
+  } else {
+    maybe_has = ctx->global_proxy()->HasRealNamedProperty(context, property);
+    if (maybe_has.IsNothing()) {
+      return Intercepted::kNo;
+    } else if (maybe_has.FromJust()) {
+      Maybe<PropertyAttribute> maybe_attr =
+          ctx->global_proxy()->GetRealNamedPropertyAttributes(context,
+                                                              property);
+      if (!maybe_attr.To(&attr)) {
+        return Intercepted::kNo;
+      }
+      args.GetReturnValue().Set(attr);
+      return Intercepted::kYes;
+    }
+  }
+
+  return Intercepted::kNo;
+}
+
+// static
+Intercepted ContextifyContext::PropertyGetterCallback(
+    Local<Name> property, const PropertyCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  ContextifyContext* ctx = ContextifyContext::Get(args);
+
+  // Still initializing
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
+
+  Local<Context> context = ctx->context();
+  Local<Object> sandbox = ctx->sandbox();
+
+  TryCatchScope try_catch(env);
   MaybeLocal<Value> maybe_rv =
       sandbox->GetRealNamedProperty(context, property);
   if (maybe_rv.IsEmpty()) {
@@ -472,22 +529,29 @@ void ContextifyContext::PropertyGetterCallback(
 
   Local<Value> rv;
   if (maybe_rv.ToLocal(&rv)) {
+    if (try_catch.HasCaught() && !try_catch.HasTerminated()) {
+      try_catch.ReThrow();
+    }
     if (rv == sandbox)
       rv = ctx->global_proxy();
 
     args.GetReturnValue().Set(rv);
+    return Intercepted::kYes;
   }
+  return Intercepted::kNo;
 }
 
 // static
-void ContextifyContext::PropertySetterCallback(
+Intercepted ContextifyContext::PropertySetterCallback(
     Local<Name> property,
     Local<Value> value,
-    const PropertyCallbackInfo<Value>& args) {
+    const PropertyCallbackInfo<void>& args) {
   ContextifyContext* ctx = ContextifyContext::Get(args);
 
   // Still initializing
-  if (IsStillInitializing(ctx)) return;
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
 
   Local<Context> context = ctx->context();
   PropertyAttribute attributes = PropertyAttribute::None;
@@ -505,8 +569,9 @@ void ContextifyContext::PropertySetterCallback(
       (static_cast<int>(attributes) &
       static_cast<int>(PropertyAttribute::ReadOnly));
 
-  if (read_only)
-    return;
+  if (read_only) {
+    return Intercepted::kNo;
+  }
 
   // true for x = 5
   // false for this.x = 5
@@ -525,21 +590,45 @@ void ContextifyContext::PropertySetterCallback(
 
   bool is_declared = is_declared_on_global_proxy || is_declared_on_sandbox;
   if (!is_declared && args.ShouldThrowOnError() && is_contextual_store &&
-      !is_function)
-    return;
+      !is_function) {
+    return Intercepted::kNo;
+  }
 
-  USE(ctx->sandbox()->Set(context, property, value));
-  args.GetReturnValue().Set(value);
+  if (!is_declared && property->IsSymbol()) {
+    return Intercepted::kNo;
+  }
+  if (ctx->sandbox()->Set(context, property, value).IsNothing()) {
+    return Intercepted::kNo;
+  }
+
+  Local<Value> desc;
+  if (is_declared_on_sandbox &&
+      ctx->sandbox()
+          ->GetOwnPropertyDescriptor(context, property)
+          .ToLocal(&desc) &&
+      !desc->IsUndefined()) {
+    Environment* env = Environment::GetCurrent(context);
+    Local<Object> desc_obj = desc.As<Object>();
+
+    // We have to specify the return value for any contextual or get/set
+    // property
+    if (desc_obj->HasOwnProperty(context, env->get_string()).FromMaybe(false) ||
+        desc_obj->HasOwnProperty(context, env->set_string()).FromMaybe(false)) {
+      return Intercepted::kYes;
+    }
+  }
+  return Intercepted::kNo;
 }
 
 // static
-void ContextifyContext::PropertyDescriptorCallback(
-    Local<Name> property,
-    const PropertyCallbackInfo<Value>& args) {
+Intercepted ContextifyContext::PropertyDescriptorCallback(
+    Local<Name> property, const PropertyCallbackInfo<Value>& args) {
   ContextifyContext* ctx = ContextifyContext::Get(args);
 
   // Still initializing
-  if (IsStillInitializing(ctx)) return;
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
 
   Local<Context> context = ctx->context();
 
@@ -549,19 +638,23 @@ void ContextifyContext::PropertyDescriptorCallback(
     Local<Value> desc;
     if (sandbox->GetOwnPropertyDescriptor(context, property).ToLocal(&desc)) {
       args.GetReturnValue().Set(desc);
+      return Intercepted::kYes;
     }
   }
+  return Intercepted::kNo;
 }
 
 // static
-void ContextifyContext::PropertyDefinerCallback(
+Intercepted ContextifyContext::PropertyDefinerCallback(
     Local<Name> property,
     const PropertyDescriptor& desc,
-    const PropertyCallbackInfo<Value>& args) {
+    const PropertyCallbackInfo<void>& args) {
   ContextifyContext* ctx = ContextifyContext::Get(args);
 
   // Still initializing
-  if (IsStillInitializing(ctx)) return;
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
 
   Local<Context> context = ctx->context();
   Isolate* isolate = context->GetIsolate();
@@ -574,11 +667,14 @@ void ContextifyContext::PropertyDefinerCallback(
   bool read_only =
       static_cast<int>(attributes) &
           static_cast<int>(PropertyAttribute::ReadOnly);
+  bool dont_delete = static_cast<int>(attributes) &
+                     static_cast<int>(PropertyAttribute::DontDelete);
 
-  // If the property is set on the global as read_only, don't change it on
-  // the global or sandbox.
-  if (is_declared && read_only)
-    return;
+  // If the property is set on the global as neither writable nor
+  // configurable, don't change it on the global or sandbox.
+  if (is_declared && read_only && dont_delete) {
+    return Intercepted::kNo;
+  }
 
   Local<Object> sandbox = ctx->sandbox();
 
@@ -600,6 +696,9 @@ void ContextifyContext::PropertyDefinerCallback(
         desc.has_set() ? desc.set() : Undefined(isolate).As<Value>());
 
     define_prop_on_sandbox(&desc_for_sandbox);
+    // TODO(https://github.com/nodejs/node/issues/52634): this should return
+    // kYes to behave according to the expected semantics.
+    return Intercepted::kNo;
   } else {
     Local<Value> value =
         desc.has_value() ? desc.value() : Undefined(isolate).As<Value>();
@@ -611,26 +710,33 @@ void ContextifyContext::PropertyDefinerCallback(
       PropertyDescriptor desc_for_sandbox(value);
       define_prop_on_sandbox(&desc_for_sandbox);
     }
+    // TODO(https://github.com/nodejs/node/issues/52634): this should return
+    // kYes to behave according to the expected semantics.
+    return Intercepted::kNo;
   }
+  return Intercepted::kNo;
 }
 
 // static
-void ContextifyContext::PropertyDeleterCallback(
-    Local<Name> property,
-    const PropertyCallbackInfo<Boolean>& args) {
+Intercepted ContextifyContext::PropertyDeleterCallback(
+    Local<Name> property, const PropertyCallbackInfo<Boolean>& args) {
   ContextifyContext* ctx = ContextifyContext::Get(args);
 
   // Still initializing
-  if (IsStillInitializing(ctx)) return;
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
 
   Maybe<bool> success = ctx->sandbox()->Delete(ctx->context(), property);
 
-  if (success.FromMaybe(false))
-    return;
+  if (success.FromMaybe(false)) {
+    return Intercepted::kNo;
+  }
 
   // Delete failed on the sandbox, intercept and do not delete on
   // the global object.
   args.GetReturnValue().Set(false);
+  return Intercepted::kYes;
 }
 
 // static
@@ -642,91 +748,154 @@ void ContextifyContext::PropertyEnumeratorCallback(
   if (IsStillInitializing(ctx)) return;
 
   Local<Array> properties;
-
-  if (!ctx->sandbox()->GetPropertyNames(ctx->context()).ToLocal(&properties))
+  // Only get named properties, exclude symbols and indices.
+  if (!ctx->sandbox()
+           ->GetPropertyNames(
+               ctx->context(),
+               KeyCollectionMode::kIncludePrototypes,
+               static_cast<PropertyFilter>(PropertyFilter::ONLY_ENUMERABLE |
+                                           PropertyFilter::SKIP_SYMBOLS),
+               IndexFilter::kSkipIndices)
+           .ToLocal(&properties))
     return;
 
   args.GetReturnValue().Set(properties);
 }
 
 // static
-void ContextifyContext::IndexedPropertyGetterCallback(
-    uint32_t index,
-    const PropertyCallbackInfo<Value>& args) {
+void ContextifyContext::IndexedPropertyEnumeratorCallback(
+    const PropertyCallbackInfo<Array>& args) {
+  Isolate* isolate = args.GetIsolate();
+  HandleScope scope(isolate);
   ContextifyContext* ctx = ContextifyContext::Get(args);
+  Local<Context> context = ctx->context();
 
   // Still initializing
   if (IsStillInitializing(ctx)) return;
 
-  ContextifyContext::PropertyGetterCallback(
+  Local<Array> properties;
+
+  // By default, GetPropertyNames returns string and number property names, and
+  // doesn't convert the numbers to strings.
+  if (!ctx->sandbox()->GetPropertyNames(context).ToLocal(&properties)) return;
+
+  std::vector<v8::Global<Value>> properties_vec;
+  if (FromV8Array(context, properties, &properties_vec).IsNothing()) {
+    return;
+  }
+
+  // Filter out non-number property names.
+  std::vector<Local<Value>> indices;
+  for (uint32_t i = 0; i < properties->Length(); i++) {
+    Local<Value> prop = properties_vec[i].Get(isolate);
+    if (!prop->IsNumber()) {
+      continue;
+    }
+    indices.push_back(prop);
+  }
+
+  args.GetReturnValue().Set(
+      Array::New(args.GetIsolate(), indices.data(), indices.size()));
+}
+
+// static
+Intercepted ContextifyContext::IndexedPropertyQueryCallback(
+    uint32_t index, const PropertyCallbackInfo<Integer>& args) {
+  ContextifyContext* ctx = ContextifyContext::Get(args);
+
+  // Still initializing
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
+
+  return ContextifyContext::PropertyQueryCallback(
       Uint32ToName(ctx->context(), index), args);
 }
 
-
-void ContextifyContext::IndexedPropertySetterCallback(
-    uint32_t index,
-    Local<Value> value,
-    const PropertyCallbackInfo<Value>& args) {
+// static
+Intercepted ContextifyContext::IndexedPropertyGetterCallback(
+    uint32_t index, const PropertyCallbackInfo<Value>& args) {
   ContextifyContext* ctx = ContextifyContext::Get(args);
 
   // Still initializing
-  if (IsStillInitializing(ctx)) return;
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
 
-  ContextifyContext::PropertySetterCallback(
+  return ContextifyContext::PropertyGetterCallback(
+      Uint32ToName(ctx->context(), index), args);
+}
+
+Intercepted ContextifyContext::IndexedPropertySetterCallback(
+    uint32_t index,
+    Local<Value> value,
+    const PropertyCallbackInfo<void>& args) {
+  ContextifyContext* ctx = ContextifyContext::Get(args);
+
+  // Still initializing
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
+
+  return ContextifyContext::PropertySetterCallback(
       Uint32ToName(ctx->context(), index), value, args);
 }
 
 // static
-void ContextifyContext::IndexedPropertyDescriptorCallback(
-    uint32_t index,
-    const PropertyCallbackInfo<Value>& args) {
+Intercepted ContextifyContext::IndexedPropertyDescriptorCallback(
+    uint32_t index, const PropertyCallbackInfo<Value>& args) {
   ContextifyContext* ctx = ContextifyContext::Get(args);
 
   // Still initializing
-  if (IsStillInitializing(ctx)) return;
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
 
-  ContextifyContext::PropertyDescriptorCallback(
+  return ContextifyContext::PropertyDescriptorCallback(
       Uint32ToName(ctx->context(), index), args);
 }
 
-
-void ContextifyContext::IndexedPropertyDefinerCallback(
+Intercepted ContextifyContext::IndexedPropertyDefinerCallback(
     uint32_t index,
     const PropertyDescriptor& desc,
-    const PropertyCallbackInfo<Value>& args) {
+    const PropertyCallbackInfo<void>& args) {
   ContextifyContext* ctx = ContextifyContext::Get(args);
 
   // Still initializing
-  if (IsStillInitializing(ctx)) return;
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
 
-  ContextifyContext::PropertyDefinerCallback(
+  return ContextifyContext::PropertyDefinerCallback(
       Uint32ToName(ctx->context(), index), desc, args);
 }
 
 // static
-void ContextifyContext::IndexedPropertyDeleterCallback(
-    uint32_t index,
-    const PropertyCallbackInfo<Boolean>& args) {
+Intercepted ContextifyContext::IndexedPropertyDeleterCallback(
+    uint32_t index, const PropertyCallbackInfo<Boolean>& args) {
   ContextifyContext* ctx = ContextifyContext::Get(args);
 
   // Still initializing
-  if (IsStillInitializing(ctx)) return;
+  if (IsStillInitializing(ctx)) {
+    return Intercepted::kNo;
+  }
 
   Maybe<bool> success = ctx->sandbox()->Delete(ctx->context(), index);
 
-  if (success.FromMaybe(false))
-    return;
+  if (success.FromMaybe(false)) {
+    return Intercepted::kNo;
+  }
 
   // Delete failed on the sandbox, intercept and do not delete on
   // the global object.
   args.GetReturnValue().Set(false);
+  return Intercepted::kYes;
 }
 
-void ContextifyScript::Init(Environment* env, Local<Object> target) {
-  Isolate* isolate = env->isolate();
-  HandleScope scope(env->isolate());
-  Local<String> class_name =
-      FIXED_ONE_BYTE_STRING(env->isolate(), "ContextifyScript");
+void ContextifyScript::CreatePerIsolateProperties(
+    IsolateData* isolate_data, Local<ObjectTemplate> target) {
+  Isolate* isolate = isolate_data->isolate();
+  Local<String> class_name = FIXED_ONE_BYTE_STRING(isolate, "ContextifyScript");
 
   Local<FunctionTemplate> script_tmpl = NewFunctionTemplate(isolate, New);
   script_tmpl->InstanceTemplate()->SetInternalFieldCount(
@@ -735,11 +904,8 @@ void ContextifyScript::Init(Environment* env, Local<Object> target) {
   SetProtoMethod(isolate, script_tmpl, "createCachedData", CreateCachedData);
   SetProtoMethod(isolate, script_tmpl, "runInContext", RunInContext);
 
-  Local<Context> context = env->context();
-
-  target->Set(context, class_name,
-      script_tmpl->GetFunction(context).ToLocalChecked()).Check();
-  env->set_script_context_constructor_template(script_tmpl);
+  target->Set(isolate, "ContextifyScript", script_tmpl);
+  isolate_data->set_script_context_constructor_template(script_tmpl);
 }
 
 void ContextifyScript::RegisterExternalReferences(
@@ -771,10 +937,12 @@ void ContextifyScript::New(const FunctionCallbackInfo<Value>& args) {
   bool produce_cached_data = false;
   Local<Context> parsing_context = context;
 
+  Local<Symbol> id_symbol;
   if (argc > 2) {
     // new ContextifyScript(code, filename, lineOffset, columnOffset,
-    //                      cachedData, produceCachedData, parsingContext)
-    CHECK_EQ(argc, 7);
+    //                      cachedData, produceCachedData, parsingContext,
+    //                      hostDefinedOptionId)
+    CHECK_EQ(argc, 8);
     CHECK(args[2]->IsNumber());
     line_offset = args[2].As<Int32>()->Value();
     CHECK(args[3]->IsNumber());
@@ -793,6 +961,8 @@ void ContextifyScript::New(const FunctionCallbackInfo<Value>& args) {
       CHECK_NOT_NULL(sandbox);
       parsing_context = sandbox->context();
     }
+    CHECK(args[7]->IsSymbol());
+    id_symbol = args[7].As<Symbol>();
   }
 
   ContextifyScript* contextify_script =
@@ -816,21 +986,18 @@ void ContextifyScript::New(const FunctionCallbackInfo<Value>& args) {
 
   Local<PrimitiveArray> host_defined_options =
       PrimitiveArray::New(isolate, loader::HostDefinedOptions::kLength);
-  host_defined_options->Set(isolate, loader::HostDefinedOptions::kType,
-                            Number::New(isolate, loader::ScriptType::kScript));
-  host_defined_options->Set(isolate, loader::HostDefinedOptions::kID,
-                            Number::New(isolate, contextify_script->id()));
+  host_defined_options->Set(
+      isolate, loader::HostDefinedOptions::kID, id_symbol);
 
-  ScriptOrigin origin(isolate,
-                      filename,
-                      line_offset,                          // line offset
-                      column_offset,                        // column offset
-                      true,                                 // is cross origin
-                      -1,                                   // script id
-                      Local<Value>(),                       // source map URL
-                      false,                                // is opaque (?)
-                      false,                                // is WASM
-                      false,                                // is ES Module
+  ScriptOrigin origin(filename,
+                      line_offset,     // line offset
+                      column_offset,   // column offset
+                      true,            // is cross origin
+                      -1,              // script id
+                      Local<Value>(),  // source map URL
+                      false,           // is opaque (?)
+                      false,           // is WASM
+                      false,           // is ES Module
                       host_defined_options);
   ScriptCompiler::Source source(code, origin, cached_data);
   ScriptCompiler::CompileOptions compile_options =
@@ -843,12 +1010,11 @@ void ContextifyScript::New(const FunctionCallbackInfo<Value>& args) {
   ShouldNotAbortOnUncaughtScope no_abort_scope(env);
   Context::Scope scope(parsing_context);
 
-  MaybeLocal<UnboundScript> v8_script = ScriptCompiler::CompileUnboundScript(
-      isolate,
-      &source,
-      compile_options);
+  MaybeLocal<UnboundScript> maybe_v8_script =
+      ScriptCompiler::CompileUnboundScript(isolate, &source, compile_options);
 
-  if (v8_script.IsEmpty()) {
+  Local<UnboundScript> v8_script;
+  if (!maybe_v8_script.ToLocal(&v8_script)) {
     errors::DecorateErrorStack(env, try_catch);
     no_abort_scope.Close();
     if (!try_catch.HasTerminated())
@@ -857,33 +1023,100 @@ void ContextifyScript::New(const FunctionCallbackInfo<Value>& args) {
                      "ContextifyScript::New");
     return;
   }
-  contextify_script->script_.Reset(isolate, v8_script.ToLocalChecked());
 
-  Local<Context> env_context = env->context();
-  if (compile_options == ScriptCompiler::kConsumeCodeCache) {
-    args.This()->Set(
-        env_context,
-        env->cached_data_rejected_string(),
-        Boolean::New(isolate, source.GetCachedData()->rejected)).Check();
-  } else if (produce_cached_data) {
-    std::unique_ptr<ScriptCompiler::CachedData> cached_data {
-      ScriptCompiler::CreateCodeCache(v8_script.ToLocalChecked()) };
-    bool cached_data_produced = cached_data != nullptr;
-    if (cached_data_produced) {
-      MaybeLocal<Object> buf = Buffer::Copy(
-          env,
-          reinterpret_cast<const char*>(cached_data->data),
-          cached_data->length);
-      args.This()->Set(env_context,
-                       env->cached_data_string(),
-                       buf.ToLocalChecked()).Check();
-    }
-    args.This()->Set(
-        env_context,
-        env->cached_data_produced_string(),
-        Boolean::New(isolate, cached_data_produced)).Check();
+  contextify_script->script_.Reset(isolate, v8_script);
+  contextify_script->script_.SetWeak();
+  contextify_script->object()->SetInternalField(kUnboundScriptSlot, v8_script);
+
+  std::unique_ptr<ScriptCompiler::CachedData> new_cached_data;
+  if (produce_cached_data) {
+    new_cached_data.reset(ScriptCompiler::CreateCodeCache(v8_script));
   }
+
+  if (contextify_script->object()
+          ->SetPrivate(context, env->host_defined_option_symbol(), id_symbol)
+          .IsNothing()) {
+    return;
+  }
+
+  if (StoreCodeCacheResult(env,
+                           args.This(),
+                           compile_options,
+                           source,
+                           produce_cached_data,
+                           std::move(new_cached_data))
+          .IsNothing()) {
+    return;
+  }
+
+  if (args.This()
+          ->Set(env->context(),
+                env->source_map_url_string(),
+                v8_script->GetSourceMappingURL())
+          .IsNothing())
+    return;
+
   TRACE_EVENT_END0(TRACING_CATEGORY_NODE2(vm, script), "ContextifyScript::New");
+}
+
+Maybe<bool> StoreCodeCacheResult(
+    Environment* env,
+    Local<Object> target,
+    ScriptCompiler::CompileOptions compile_options,
+    const v8::ScriptCompiler::Source& source,
+    bool produce_cached_data,
+    std::unique_ptr<ScriptCompiler::CachedData> new_cached_data) {
+  Local<Context> context;
+  if (!target->GetCreationContext().ToLocal(&context)) {
+    return Nothing<bool>();
+  }
+  if (compile_options == ScriptCompiler::kConsumeCodeCache) {
+    if (target
+            ->Set(
+                context,
+                env->cached_data_rejected_string(),
+                Boolean::New(env->isolate(), source.GetCachedData()->rejected))
+            .IsNothing()) {
+      return Nothing<bool>();
+    }
+  }
+  if (produce_cached_data) {
+    bool cached_data_produced = new_cached_data != nullptr;
+    if (cached_data_produced) {
+      MaybeLocal<Object> buf =
+          Buffer::Copy(env,
+                       reinterpret_cast<const char*>(new_cached_data->data),
+                       new_cached_data->length);
+      if (target->Set(context, env->cached_data_string(), buf.ToLocalChecked())
+              .IsNothing()) {
+        return Nothing<bool>();
+      }
+    }
+    if (target
+            ->Set(context,
+                  env->cached_data_produced_string(),
+                  Boolean::New(env->isolate(), cached_data_produced))
+            .IsNothing()) {
+      return Nothing<bool>();
+    }
+  }
+  return Just(true);
+}
+
+// TODO(RaisinTen): Reuse in ContextifyContext::CompileFunction().
+MaybeLocal<Function> CompileFunction(Local<Context> context,
+                                     Local<String> filename,
+                                     Local<String> content,
+                                     std::vector<Local<String>>* parameters) {
+  ScriptOrigin script_origin(filename, 0, 0, true);
+  ScriptCompiler::Source script_source(content, script_origin);
+
+  return ScriptCompiler::CompileFunction(context,
+                                         &script_source,
+                                         parameters->size(),
+                                         parameters->data(),
+                                         0,
+                                         nullptr);
 }
 
 bool ContextifyScript::InstanceOf(Environment* env,
@@ -896,7 +1129,7 @@ void ContextifyScript::CreateCachedData(
     const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   ContextifyScript* wrapped_script;
-  ASSIGN_OR_RETURN_UNWRAP(&wrapped_script, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&wrapped_script, args.This());
   Local<UnboundScript> unbound_script =
       PersistentToLocal::Default(env->isolate(), wrapped_script->script_);
   std::unique_ptr<ScriptCompiler::CachedData> cached_data(
@@ -916,13 +1149,13 @@ void ContextifyScript::RunInContext(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
   ContextifyScript* wrapped_script;
-  ASSIGN_OR_RETURN_UNWRAP(&wrapped_script, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&wrapped_script, args.This());
 
   CHECK_EQ(args.Length(), 5);
   CHECK(args[0]->IsObject() || args[0]->IsNull());
 
   Local<Context> context;
-  std::shared_ptr<MicrotaskQueue> microtask_queue;
+  v8::MicrotaskQueue* microtask_queue = nullptr;
 
   if (args[0]->IsObject()) {
     Local<Object> sandbox = args[0].As<Object>();
@@ -971,13 +1204,13 @@ bool ContextifyScript::EvalMachine(Local<Context> context,
                                    const bool display_errors,
                                    const bool break_on_sigint,
                                    const bool break_on_first_line,
-                                   std::shared_ptr<MicrotaskQueue> mtask_queue,
+                                   MicrotaskQueue* mtask_queue,
                                    const FunctionCallbackInfo<Value>& args) {
   Context::Scope context_scope(context);
 
   if (!env->can_call_into_js())
     return false;
-  if (!ContextifyScript::InstanceOf(env, args.Holder())) {
+  if (!ContextifyScript::InstanceOf(env, args.This())) {
     THROW_ERR_INVALID_THIS(
         env,
         "Script methods can only be called on script instances.");
@@ -985,15 +1218,29 @@ bool ContextifyScript::EvalMachine(Local<Context> context,
   }
 
   TryCatchScope try_catch(env);
-  Isolate::SafeForTerminationScope safe_for_termination(env->isolate());
   ContextifyScript* wrapped_script;
-  ASSIGN_OR_RETURN_UNWRAP(&wrapped_script, args.Holder(), false);
+  ASSIGN_OR_RETURN_UNWRAP(&wrapped_script, args.This(), false);
   Local<UnboundScript> unbound_script =
       PersistentToLocal::Default(env->isolate(), wrapped_script->script_);
   Local<Script> script = unbound_script->BindToCurrentContext();
 
 #if HAVE_INSPECTOR
   if (break_on_first_line) {
+    if (UNLIKELY(!env->permission()->is_granted(
+            env,
+            permission::PermissionScope::kInspector,
+            "PauseOnNextJavascriptStatement"))) {
+      node::permission::Permission::ThrowAccessDenied(
+          env,
+          permission::PermissionScope::kInspector,
+          "PauseOnNextJavascriptStatement");
+      if (display_errors) {
+        // We should decorate non-termination exceptions
+        errors::DecorateErrorStack(env, try_catch);
+      }
+      try_catch.ReThrow();
+      return false;
+    }
     env->inspector_agent()->PauseOnNextJavascriptStatement("Break on start");
   }
 #endif
@@ -1003,7 +1250,7 @@ bool ContextifyScript::EvalMachine(Local<Context> context,
   bool received_signal = false;
   auto run = [&]() {
     MaybeLocal<Value> result = script->Run(context);
-    if (!result.IsEmpty() && mtask_queue)
+    if (!result.IsEmpty() && mtask_queue != nullptr)
       mtask_queue->PerformCheckpoint(env->isolate());
     return result;
   };
@@ -1057,19 +1304,12 @@ bool ContextifyScript::EvalMachine(Local<Context> context,
   return true;
 }
 
-
 ContextifyScript::ContextifyScript(Environment* env, Local<Object> object)
-    : BaseObject(env, object),
-      id_(env->get_next_script_id()) {
+    : BaseObject(env, object) {
   MakeWeak();
-  env->id_to_script_map.emplace(id_, this);
 }
 
-
-ContextifyScript::~ContextifyScript() {
-  env()->id_to_script_map.erase(id_);
-}
-
+ContextifyScript::~ContextifyScript() {}
 
 void ContextifyContext::CompileFunction(
     const FunctionCallbackInfo<Value>& args) {
@@ -1131,6 +1371,10 @@ void ContextifyContext::CompileFunction(
     params_buf = args[8].As<Array>();
   }
 
+  // Argument 10: host-defined option symbol
+  CHECK(args[9]->IsSymbol());
+  Local<Symbol> id_symbol = args[9].As<Symbol>();
+
   // Read cache from cached data buffer
   ScriptCompiler::CachedData* cached_data = nullptr;
   if (!cached_data_buf.IsEmpty()) {
@@ -1139,40 +1383,28 @@ void ContextifyContext::CompileFunction(
       data + cached_data_buf->ByteOffset(), cached_data_buf->ByteLength());
   }
 
-  // Get the function id
-  uint32_t id = env->get_next_function_id();
-
-  // Set host_defined_options
   Local<PrimitiveArray> host_defined_options =
-      PrimitiveArray::New(isolate, loader::HostDefinedOptions::kLength);
-  host_defined_options->Set(
-      isolate,
-      loader::HostDefinedOptions::kType,
-      Number::New(isolate, loader::ScriptType::kFunction));
-  host_defined_options->Set(
-      isolate, loader::HostDefinedOptions::kID, Number::New(isolate, id));
+      loader::ModuleWrap::GetHostDefinedOptions(isolate, id_symbol);
 
-  ScriptOrigin origin(isolate,
-                      filename,
-                      line_offset,       // line offset
-                      column_offset,     // column offset
-                      true,              // is cross origin
-                      -1,                // script id
-                      Local<Value>(),    // source map URL
-                      false,             // is opaque (?)
-                      false,             // is WASM
-                      false,             // is ES Module
+  ScriptOrigin origin(filename,
+                      line_offset,     // line offset
+                      column_offset,   // column offset
+                      true,            // is cross origin
+                      -1,              // script id
+                      Local<Value>(),  // source map URL
+                      false,           // is opaque (?)
+                      false,           // is WASM
+                      false,           // is ES Module
                       host_defined_options);
-
   ScriptCompiler::Source source(code, origin, cached_data);
+
   ScriptCompiler::CompileOptions options;
-  if (source.GetCachedData() == nullptr) {
-    options = ScriptCompiler::kNoCompileOptions;
-  } else {
+  if (source.GetCachedData() != nullptr) {
     options = ScriptCompiler::kConsumeCodeCache;
+  } else {
+    options = ScriptCompiler::kNoCompileOptions;
   }
 
-  TryCatchScope try_catch(env);
   Context::Scope scope(parsing_context);
 
   // Read context extensions from buffer
@@ -1197,9 +1429,51 @@ void ContextifyContext::CompileFunction(
     }
   }
 
+  TryCatchScope try_catch(env);
+  Local<Object> result = CompileFunctionAndCacheResult(env,
+                                                       parsing_context,
+                                                       &source,
+                                                       params,
+                                                       context_extensions,
+                                                       options,
+                                                       produce_cached_data,
+                                                       id_symbol,
+                                                       try_catch);
+
+  if (try_catch.HasCaught() && !try_catch.HasTerminated()) {
+    try_catch.ReThrow();
+    return;
+  }
+
+  if (result.IsEmpty()) {
+    return;
+  }
+  args.GetReturnValue().Set(result);
+}
+
+static std::vector<Local<String>> GetCJSParameters(IsolateData* data) {
+  return {
+      data->exports_string(),
+      data->require_string(),
+      data->module_string(),
+      data->__filename_string(),
+      data->__dirname_string(),
+  };
+}
+
+Local<Object> ContextifyContext::CompileFunctionAndCacheResult(
+    Environment* env,
+    Local<Context> parsing_context,
+    ScriptCompiler::Source* source,
+    std::vector<Local<String>> params,
+    std::vector<Local<Object>> context_extensions,
+    ScriptCompiler::CompileOptions options,
+    bool produce_cached_data,
+    Local<Symbol> id_symbol,
+    const TryCatchScope& try_catch) {
   MaybeLocal<Function> maybe_fn = ScriptCompiler::CompileFunction(
       parsing_context,
-      &source,
+      source,
       params.size(),
       params.data(),
       context_extensions.size(),
@@ -1211,70 +1485,375 @@ void ContextifyContext::CompileFunction(
   if (!maybe_fn.ToLocal(&fn)) {
     if (try_catch.HasCaught() && !try_catch.HasTerminated()) {
       errors::DecorateErrorStack(env, try_catch);
-      try_catch.ReThrow();
+      return Object::New(env->isolate());
     }
-    return;
   }
 
-  Local<Object> cache_key;
-  if (!env->compiled_fn_entry_template()->NewInstance(
-           context).ToLocal(&cache_key)) {
-    return;
+  Local<Context> context = env->context();
+  if (fn->SetPrivate(context, env->host_defined_option_symbol(), id_symbol)
+          .IsNothing()) {
+    return Object::New(env->isolate());
   }
-  CompiledFnEntry* entry = new CompiledFnEntry(env, cache_key, id, fn);
-  env->id_to_function_map.emplace(id, entry);
 
+  Isolate* isolate = env->isolate();
   Local<Object> result = Object::New(isolate);
   if (result->Set(parsing_context, env->function_string(), fn).IsNothing())
-    return;
-  if (result->Set(parsing_context, env->cache_key_string(), cache_key)
+    return Object::New(env->isolate());
+  if (result
+          ->Set(parsing_context,
+                env->source_map_url_string(),
+                fn->GetScriptOrigin().SourceMapUrl())
           .IsNothing())
-    return;
+    return Object::New(env->isolate());
 
+  std::unique_ptr<ScriptCompiler::CachedData> new_cached_data;
   if (produce_cached_data) {
-    const std::unique_ptr<ScriptCompiler::CachedData> cached_data(
-        ScriptCompiler::CreateCodeCacheForFunction(fn));
-    bool cached_data_produced = cached_data != nullptr;
-    if (cached_data_produced) {
-      MaybeLocal<Object> buf = Buffer::Copy(
-          env,
-          reinterpret_cast<const char*>(cached_data->data),
-          cached_data->length);
-      if (result
-              ->Set(parsing_context,
-                    env->cached_data_string(),
-                    buf.ToLocalChecked())
-              .IsNothing())
-        return;
-    }
-    if (result
-            ->Set(parsing_context,
-                  env->cached_data_produced_string(),
-                  Boolean::New(isolate, cached_data_produced))
-            .IsNothing())
-      return;
+    new_cached_data.reset(ScriptCompiler::CreateCodeCacheForFunction(fn));
+  }
+  if (StoreCodeCacheResult(env,
+                           result,
+                           options,
+                           *source,
+                           produce_cached_data,
+                           std::move(new_cached_data))
+          .IsNothing()) {
+    return Object::New(env->isolate());
   }
 
+  return result;
+}
+
+// When compiling as CommonJS source code that contains ESM syntax, the
+// following error messages are returned:
+// - `import` statements: "Cannot use import statement outside a module"
+// - `export` statements: "Unexpected token 'export'"
+// - `import.meta` references: "Cannot use 'import.meta' outside a module"
+// Dynamic `import()` is permitted in CommonJS, so it does not error.
+// While top-level `await` is not permitted in CommonJS, it returns the same
+// error message as when `await` is used in a sync function, so we don't use it
+// as a disambiguation.
+static std::vector<std::string_view> esm_syntax_error_messages = {
+    "Cannot use import statement outside a module",  // `import` statements
+    "Unexpected token 'export'",                     // `export` statements
+    "Cannot use 'import.meta' outside a module"};    // `import.meta` references
+
+// Another class of error messages that we need to check for are syntax errors
+// where the syntax throws when parsed as CommonJS but succeeds when parsed as
+// ESM. So far, the cases we've found are:
+// - CommonJS module variables (`module`, `exports`, `require`, `__filename`,
+//   `__dirname`): if the user writes code such as `const module =` in the top
+//   level of a CommonJS module, it will throw a syntax error; but the same
+//   code is valid in ESM.
+// - Top-level `await`: if the user writes `await` at the top level of a
+//   CommonJS module, it will throw a syntax error; but the same code is valid
+//   in ESM.
+static std::vector<std::string_view> throws_only_in_cjs_error_messages = {
+    "Identifier 'module' has already been declared",
+    "Identifier 'exports' has already been declared",
+    "Identifier 'require' has already been declared",
+    "Identifier '__filename' has already been declared",
+    "Identifier '__dirname' has already been declared",
+    "await is only valid in async functions and "
+    "the top level bodies of modules"};
+
+// If cached_data is provided, it would be used for the compilation and
+// the on-disk compilation cache from NODE_COMPILE_CACHE (if configured)
+// would be ignored.
+static MaybeLocal<Function> CompileFunctionForCJSLoader(
+    Environment* env,
+    Local<Context> context,
+    Local<String> code,
+    Local<String> filename,
+    bool* cache_rejected,
+    bool is_cjs_scope,
+    ScriptCompiler::CachedData* cached_data) {
+  Isolate* isolate = context->GetIsolate();
+  EscapableHandleScope scope(isolate);
+
+  Local<Symbol> symbol = env->vm_dynamic_import_default_internal();
+  Local<PrimitiveArray> hdo =
+      loader::ModuleWrap::GetHostDefinedOptions(isolate, symbol);
+  ScriptOrigin origin(filename,
+                      0,               // line offset
+                      0,               // column offset
+                      true,            // is cross origin
+                      -1,              // script id
+                      Local<Value>(),  // source map URL
+                      false,           // is opaque
+                      false,           // is WASM
+                      false,           // is ES Module
+                      hdo);
+
+  CompileCacheEntry* cache_entry = nullptr;
+  if (cached_data == nullptr && env->use_compile_cache()) {
+    cache_entry = env->compile_cache_handler()->GetOrInsert(
+        code, filename, CachedCodeType::kCommonJS);
+  }
+  if (cache_entry != nullptr && cache_entry->cache != nullptr) {
+    // source will take ownership of cached_data.
+    cached_data = cache_entry->CopyCache();
+  }
+
+  ScriptCompiler::Source source(code, origin, cached_data);
+  ScriptCompiler::CompileOptions options;
+  if (cached_data == nullptr) {
+    options = ScriptCompiler::kNoCompileOptions;
+  } else {
+    options = ScriptCompiler::kConsumeCodeCache;
+  }
+
+  std::vector<Local<String>> params;
+  if (is_cjs_scope) {
+    params = GetCJSParameters(env->isolate_data());
+  }
+  MaybeLocal<Function> maybe_fn = ScriptCompiler::CompileFunction(
+      context,
+      &source,
+      params.size(),
+      params.data(),
+      0,       /* context extensions size */
+      nullptr, /* context extensions data */
+      // TODO(joyeecheung): allow optional eager compilation.
+      options);
+
+  Local<Function> fn;
+  if (!maybe_fn.ToLocal(&fn)) {
+    return scope.EscapeMaybe(MaybeLocal<Function>());
+  }
+
+  if (options == ScriptCompiler::kConsumeCodeCache) {
+    *cache_rejected = source.GetCachedData()->rejected;
+  }
+  if (cache_entry != nullptr) {
+    env->compile_cache_handler()->MaybeSave(cache_entry, fn, *cache_rejected);
+  }
+  return scope.Escape(fn);
+}
+
+static bool warned_about_require_esm = false;
+// TODO(joyeecheung): this was copied from the warning previously emitted in the
+// JS land, but it's not very helpful. There should be specific information
+// about which file or which package.json to update.
+const char* require_esm_warning =
+    "To load an ES module, set \"type\": \"module\" in the package.json or use "
+    "the .mjs extension.";
+
+static bool ShouldRetryAsESM(Realm* realm,
+                             Local<String> message,
+                             Local<String> code,
+                             Local<String> resource_name);
+
+static void CompileFunctionForCJSLoader(
+    const FunctionCallbackInfo<Value>& args) {
+  CHECK(args[0]->IsString());
+  CHECK(args[1]->IsString());
+  CHECK(args[2]->IsBoolean());
+  CHECK(args[3]->IsBoolean());
+  Local<String> code = args[0].As<String>();
+  Local<String> filename = args[1].As<String>();
+  bool is_sea_main = args[2].As<Boolean>()->Value();
+  bool should_detect_module = args[3].As<Boolean>()->Value();
+
+  Isolate* isolate = args.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Realm* realm = Realm::GetCurrent(context);
+  Environment* env = realm->env();
+
+  bool cache_rejected = false;
+  Local<Function> fn;
+  Local<Value> cjs_exception;
+  Local<Message> cjs_message;
+
+  ScriptCompiler::CachedData* cached_data = nullptr;
+#ifndef DISABLE_SINGLE_EXECUTABLE_APPLICATION
+  if (is_sea_main) {
+    sea::SeaResource sea = sea::FindSingleExecutableResource();
+    // Use the "main" field in SEA config for the filename.
+    Local<Value> filename_from_sea;
+    if (!ToV8Value(context, sea.code_path).ToLocal(&filename_from_sea)) {
+      return;
+    }
+    filename = filename_from_sea.As<String>();
+    if (sea.use_code_cache()) {
+      std::string_view data = sea.code_cache.value();
+      cached_data = new ScriptCompiler::CachedData(
+          reinterpret_cast<const uint8_t*>(data.data()),
+          static_cast<int>(data.size()),
+          v8::ScriptCompiler::CachedData::BufferNotOwned);
+    }
+  }
+#endif
+
+  {
+    ShouldNotAbortOnUncaughtScope no_abort_scope(realm->env());
+    TryCatchScope try_catch(env);
+    if (!CompileFunctionForCJSLoader(
+             env, context, code, filename, &cache_rejected, true, cached_data)
+             .ToLocal(&fn)) {
+      CHECK(try_catch.HasCaught());
+      CHECK(!try_catch.HasTerminated());
+      cjs_exception = try_catch.Exception();
+      cjs_message = try_catch.Message();
+      errors::DecorateErrorStack(env, cjs_exception, cjs_message);
+    }
+  }
+
+  bool can_parse_as_esm = false;
+  if (!cjs_exception.IsEmpty()) {
+    // Use the URL to match what would be used in the origin if it's going to
+    // be reparsed as ESM.
+    Utf8Value filename_utf8(isolate, filename);
+    std::string url = url::FromFilePath(filename_utf8.ToStringView());
+    Local<String> url_value;
+    if (!String::NewFromUtf8(isolate, url.c_str()).ToLocal(&url_value)) {
+      return;
+    }
+    can_parse_as_esm =
+        ShouldRetryAsESM(realm, cjs_message->Get(), code, url_value);
+    if (!can_parse_as_esm) {
+      // The syntax error is not related to ESM, throw the original error.
+      isolate->ThrowException(cjs_exception);
+      return;
+    }
+
+    if (!should_detect_module) {
+      bool should_throw = true;
+      if (!warned_about_require_esm) {
+        // This needs to call process.emit('warning') in JS which can throw if
+        // the user listener throws. In that case, don't try to throw the syntax
+        // error.
+        should_throw =
+            ProcessEmitWarningSync(env, require_esm_warning).IsJust();
+      }
+      if (should_throw) {
+        isolate->ThrowException(cjs_exception);
+      }
+      return;
+    }
+  }
+
+  Local<Value> undefined = v8::Undefined(isolate);
+  std::vector<Local<Name>> names = {
+      env->cached_data_rejected_string(),
+      env->source_map_url_string(),
+      env->function_string(),
+      FIXED_ONE_BYTE_STRING(isolate, "canParseAsESM"),
+  };
+  std::vector<Local<Value>> values = {
+      Boolean::New(isolate, cache_rejected),
+      fn.IsEmpty() ? undefined : fn->GetScriptOrigin().SourceMapUrl(),
+      fn.IsEmpty() ? undefined : fn.As<Value>(),
+      Boolean::New(isolate, can_parse_as_esm),
+  };
+  Local<Object> result = Object::New(
+      isolate, v8::Null(isolate), names.data(), values.data(), names.size());
   args.GetReturnValue().Set(result);
 }
 
-void CompiledFnEntry::WeakCallback(
-    const WeakCallbackInfo<CompiledFnEntry>& data) {
-  CompiledFnEntry* entry = data.GetParameter();
-  delete entry;
+bool ShouldRetryAsESM(Realm* realm,
+                      Local<String> message,
+                      Local<String> code,
+                      Local<String> resource_name) {
+  Isolate* isolate = realm->isolate();
+
+  Utf8Value message_value(isolate, message);
+  auto message_view = message_value.ToStringView();
+
+  // These indicates that the file contains syntaxes that are only valid in
+  // ESM. So it must be true.
+  for (const auto& error_message : esm_syntax_error_messages) {
+    if (message_view.find(error_message) != std::string_view::npos) {
+      return true;
+    }
+  }
+
+  // Check if the error message is allowed in ESM but not in CommonJS. If it
+  // is the case, let's check if file can be compiled as ESM.
+  bool maybe_valid_in_esm = false;
+  for (const auto& error_message : throws_only_in_cjs_error_messages) {
+    if (message_view.find(error_message) != std::string_view::npos) {
+      maybe_valid_in_esm = true;
+      break;
+    }
+  }
+  if (!maybe_valid_in_esm) {
+    return false;
+  }
+
+  bool cache_rejected = false;
+  TryCatchScope try_catch(realm->env());
+  ShouldNotAbortOnUncaughtScope no_abort_scope(realm->env());
+  Local<v8::Module> module;
+  Local<PrimitiveArray> hdo = loader::ModuleWrap::GetHostDefinedOptions(
+      isolate, realm->isolate_data()->source_text_module_default_hdo());
+  if (loader::ModuleWrap::CompileSourceTextModule(
+          realm, code, resource_name, 0, 0, hdo, std::nullopt, &cache_rejected)
+          .ToLocal(&module)) {
+    return true;
+  }
+
+  return false;
 }
 
-CompiledFnEntry::CompiledFnEntry(Environment* env,
-                                 Local<Object> object,
-                                 uint32_t id,
-                                 Local<Function> fn)
-    : BaseObject(env, object), id_(id), fn_(env->isolate(), fn) {
-  fn_.SetWeak(this, WeakCallback, v8::WeakCallbackType::kParameter);
+static void ShouldRetryAsESM(const FunctionCallbackInfo<Value>& args) {
+  Realm* realm = Realm::GetCurrent(args);
+
+  CHECK_EQ(args.Length(), 3);  // message, code, resource_name
+  CHECK(args[0]->IsString());
+  Local<String> message = args[0].As<String>();
+  CHECK(args[1]->IsString());
+  Local<String> code = args[1].As<String>();
+  CHECK(args[2]->IsString());
+  Local<String> resource_name = args[2].As<String>();
+
+  args.GetReturnValue().Set(
+      ShouldRetryAsESM(realm, message, code, resource_name));
 }
 
-CompiledFnEntry::~CompiledFnEntry() {
-  env()->id_to_function_map.erase(id_);
-  fn_.ClearWeak();
+static void ContainsModuleSyntax(const FunctionCallbackInfo<Value>& args) {
+  Isolate* isolate = args.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Realm* realm = Realm::GetCurrent(context);
+  Environment* env = realm->env();
+
+  CHECK_GE(args.Length(), 2);
+
+  // Argument 1: source code
+  CHECK(args[0]->IsString());
+  Local<String> code = args[0].As<String>();
+
+  // Argument 2: filename
+  CHECK(args[1]->IsString());
+  Local<String> filename = args[1].As<String>();
+
+  // Argument 3: resource name (URL for ES module).
+  Local<String> resource_name = filename;
+  if (args[2]->IsString()) {
+    resource_name = args[2].As<String>();
+  }
+  // Argument 4: flag to indicate if CJS variables should not be in scope
+  // (they should be for normal CommonJS modules, but not for the
+  // CommonJS eval scope).
+  bool cjs_var = !args[3]->IsString();
+
+  bool cache_rejected = false;
+  Local<String> message;
+  {
+    Local<Function> fn;
+    TryCatchScope try_catch(env);
+    ShouldNotAbortOnUncaughtScope no_abort_scope(env);
+    if (CompileFunctionForCJSLoader(
+            env, context, code, filename, &cache_rejected, cjs_var, nullptr)
+            .ToLocal(&fn)) {
+      args.GetReturnValue().Set(false);
+      return;
+    }
+    CHECK(try_catch.HasCaught());
+    message = try_catch.Message()->Get();
+  }
+
+  bool result = ShouldRetryAsESM(realm, message, code, resource_name);
+  args.GetReturnValue().Set(result);
 }
 
 static void StartSigintWatchdog(const FunctionCallbackInfo<Value>& args) {
@@ -1315,63 +1894,35 @@ static void MeasureMemory(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(promise);
 }
 
-MicrotaskQueueWrap::MicrotaskQueueWrap(Environment* env, Local<Object> obj)
-  : BaseObject(env, obj),
-    microtask_queue_(
-        MicrotaskQueue::New(env->isolate(), MicrotasksPolicy::kExplicit)) {
-  MakeWeak();
-}
+void CreatePerIsolateProperties(IsolateData* isolate_data,
+                                Local<ObjectTemplate> target) {
+  Isolate* isolate = isolate_data->isolate();
 
-const std::shared_ptr<MicrotaskQueue>&
-MicrotaskQueueWrap::microtask_queue() const {
-  return microtask_queue_;
-}
+  ContextifyContext::CreatePerIsolateProperties(isolate_data, target);
+  ContextifyScript::CreatePerIsolateProperties(isolate_data, target);
 
-void MicrotaskQueueWrap::New(const FunctionCallbackInfo<Value>& args) {
-  CHECK(args.IsConstructCall());
-  new MicrotaskQueueWrap(Environment::GetCurrent(args), args.This());
-}
-
-void MicrotaskQueueWrap::Init(Environment* env, Local<Object> target) {
-  Isolate* isolate = env->isolate();
-  HandleScope scope(isolate);
-  Local<Context> context = env->context();
-  Local<FunctionTemplate> tmpl = NewFunctionTemplate(isolate, New);
-  tmpl->InstanceTemplate()->SetInternalFieldCount(
-      ContextifyScript::kInternalFieldCount);
-  env->set_microtask_queue_ctor_template(tmpl);
-  SetConstructorFunction(context, target, "MicrotaskQueue", tmpl);
-}
-
-void MicrotaskQueueWrap::RegisterExternalReferences(
-    ExternalReferenceRegistry* registry) {
-  registry->Register(New);
-}
-
-void Initialize(Local<Object> target,
-                Local<Value> unused,
-                Local<Context> context,
-                void* priv) {
-  Environment* env = Environment::GetCurrent(context);
-  Isolate* isolate = env->isolate();
-  ContextifyContext::Init(env, target);
-  ContextifyScript::Init(env, target);
-  MicrotaskQueueWrap::Init(env, target);
-
-  SetMethod(context, target, "startSigintWatchdog", StartSigintWatchdog);
-  SetMethod(context, target, "stopSigintWatchdog", StopSigintWatchdog);
+  SetMethod(isolate, target, "startSigintWatchdog", StartSigintWatchdog);
+  SetMethod(isolate, target, "stopSigintWatchdog", StopSigintWatchdog);
   // Used in tests.
   SetMethodNoSideEffect(
-      context, target, "watchdogHasPendingSigint", WatchdogHasPendingSigint);
+      isolate, target, "watchdogHasPendingSigint", WatchdogHasPendingSigint);
 
-  {
-    Local<FunctionTemplate> tpl = FunctionTemplate::New(env->isolate());
-    tpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "CompiledFnEntry"));
-    tpl->InstanceTemplate()->SetInternalFieldCount(
-        CompiledFnEntry::kInternalFieldCount);
+  SetMethod(isolate, target, "measureMemory", MeasureMemory);
+  SetMethod(isolate,
+            target,
+            "compileFunctionForCJSLoader",
+            CompileFunctionForCJSLoader);
 
-    env->set_compiled_fn_entry_template(tpl->InstanceTemplate());
-  }
+  SetMethod(isolate, target, "containsModuleSyntax", ContainsModuleSyntax);
+  SetMethod(isolate, target, "shouldRetryAsESM", ShouldRetryAsESM);
+}
+
+static void CreatePerContextProperties(Local<Object> target,
+                                       Local<Value> unused,
+                                       Local<Context> context,
+                                       void* priv) {
+  Environment* env = Environment::GetCurrent(context);
+  Isolate* isolate = env->isolate();
 
   Local<Object> constants = Object::New(env->isolate());
   Local<Object> measure_memory = Object::New(env->isolate());
@@ -1397,23 +1948,26 @@ void Initialize(Local<Object> target,
   READONLY_PROPERTY(constants, "measureMemory", measure_memory);
 
   target->Set(context, env->constants_string(), constants).Check();
-
-  SetMethod(context, target, "measureMemory", MeasureMemory);
 }
 
 void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   ContextifyContext::RegisterExternalReferences(registry);
   ContextifyScript::RegisterExternalReferences(registry);
-  MicrotaskQueueWrap::RegisterExternalReferences(registry);
 
+  registry->Register(CompileFunctionForCJSLoader);
   registry->Register(StartSigintWatchdog);
   registry->Register(StopSigintWatchdog);
   registry->Register(WatchdogHasPendingSigint);
   registry->Register(MeasureMemory);
+  registry->Register(ContainsModuleSyntax);
+  registry->Register(ShouldRetryAsESM);
 }
 }  // namespace contextify
 }  // namespace node
 
-NODE_MODULE_CONTEXT_AWARE_INTERNAL(contextify, node::contextify::Initialize)
-NODE_MODULE_EXTERNAL_REFERENCE(contextify,
-                               node::contextify::RegisterExternalReferences)
+NODE_BINDING_CONTEXT_AWARE_INTERNAL(
+    contextify, node::contextify::CreatePerContextProperties)
+NODE_BINDING_PER_ISOLATE_INIT(contextify,
+                              node::contextify::CreatePerIsolateProperties)
+NODE_BINDING_EXTERNAL_REFERENCE(contextify,
+                                node::contextify::RegisterExternalReferences)

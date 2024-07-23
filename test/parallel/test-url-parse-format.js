@@ -853,16 +853,32 @@ const parseTests = {
   'http://a\r" \t\n<\'b:b@c\r\nd/e?f': {
     protocol: 'http:',
     slashes: true,
-    auth: 'a\r" \t\n<\'b:b',
-    host: 'c',
+    auth: 'a" <\'b:b',
+    host: 'cd',
     port: null,
-    hostname: 'c',
+    hostname: 'cd',
     hash: null,
     search: '?f',
     query: 'f',
-    pathname: '%0D%0Ad/e',
-    path: '%0D%0Ad/e?f',
-    href: 'http://a%0D%22%20%09%0A%3C\'b:b@c/%0D%0Ad/e?f'
+    pathname: '/e',
+    path: '/e?f',
+    href: 'http://a%22%20%3C\'b:b@cd/e?f'
+  },
+
+  // Git urls used by npm
+  'git+ssh://git@github.com:npm/npm': {
+    protocol: 'git+ssh:',
+    slashes: true,
+    auth: 'git',
+    host: 'github.com',
+    port: null,
+    hostname: 'github.com',
+    hash: null,
+    search: null,
+    query: null,
+    pathname: '/:npm/npm',
+    path: '/:npm/npm',
+    href: 'git+ssh://git@github.com/:npm/npm'
   },
 
   'https://*': {
@@ -991,6 +1007,22 @@ const parseTests = {
     path: '/',
     href: 'https://evil.com$.example.com/'
   },
+
+  // Validate the output of hostname with commas.
+  'x://0.0,1.1/': {
+    protocol: 'x:',
+    slashes: true,
+    auth: null,
+    host: '0.0,1.1',
+    port: null,
+    hostname: '0.0,1.1',
+    hash: null,
+    search: null,
+    query: null,
+    pathname: '/',
+    path: '/',
+    href: 'x://0.0,1.1/'
+  }
 };
 
 for (const u in parseTests) {
@@ -1007,7 +1039,7 @@ for (const u in parseTests) {
   assert.deepStrictEqual(
     actual,
     expected,
-    `expected ${inspect(expected)}, got ${inspect(actual)}`
+    `parsing ${u} and expected ${inspect(expected)} but got ${inspect(actual)}`
   );
   assert.deepStrictEqual(
     spaced,

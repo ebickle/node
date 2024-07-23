@@ -39,6 +39,7 @@
 #include "nghttp2_buf.h"
 #include "nghttp2_callbacks.h"
 #include "nghttp2_mem.h"
+#include "nghttp2_ratelim.h"
 
 /* The global variable for tests where we want to disable strict
    preface handling. */
@@ -52,7 +53,9 @@ typedef enum {
   NGHTTP2_OPTMASK_NO_RECV_CLIENT_MAGIC = 1 << 1,
   NGHTTP2_OPTMASK_NO_HTTP_MESSAGING = 1 << 2,
   NGHTTP2_OPTMASK_NO_AUTO_PING_ACK = 1 << 3,
-  NGHTTP2_OPTMASK_NO_CLOSED_STREAMS = 1 << 4
+  NGHTTP2_OPTMASK_NO_CLOSED_STREAMS = 1 << 4,
+  NGHTTP2_OPTMASK_SERVER_FALLBACK_RFC7540_PRIORITIES = 1 << 5,
+  NGHTTP2_OPTMASK_NO_RFC9113_LEADING_AND_TRAILING_WS_VALIDATION = 1 << 6,
 } nghttp2_optmask;
 
 /*
@@ -62,7 +65,8 @@ typedef enum {
 typedef enum {
   NGHTTP2_TYPEMASK_NONE = 0,
   NGHTTP2_TYPEMASK_ALTSVC = 1 << 0,
-  NGHTTP2_TYPEMASK_ORIGIN = 1 << 1
+  NGHTTP2_TYPEMASK_ORIGIN = 1 << 1,
+  NGHTTP2_TYPEMASK_PRIORITY_UPDATE = 1 << 2
 } nghttp2_typemask;
 
 typedef enum {
@@ -101,6 +105,14 @@ typedef struct {
 
 /* The default value of maximum number of concurrent streams. */
 #define NGHTTP2_DEFAULT_MAX_CONCURRENT_STREAMS 0xffffffffu
+
+/* The default values for stream reset rate limiter. */
+#define NGHTTP2_DEFAULT_STREAM_RESET_BURST 1000
+#define NGHTTP2_DEFAULT_STREAM_RESET_RATE 33
+
+/* The default max number of CONTINUATION frames following an incoming
+   HEADER frame. */
+#define NGHTTP2_DEFAULT_MAX_CONTINUATIONS 8
 
 /* Internal state when receiving incoming frame */
 typedef enum {
@@ -151,10 +163,8 @@ typedef struct {
   /* padding length for the current frame */
   size_t padlen;
   nghttp2_inbound_state state;
-  /* Small buffer.  Currently the largest contiguous chunk to buffer
-     is frame header.  We buffer part of payload, but they are smaller
-     than frame header. */
-  uint8_t raw_sbuf[NGHTTP2_FRAME_HDLEN];
+  /* Small fixed sized buffer. */
+  uint8_t raw_sbuf[32];
 } nghttp2_inbound_frame;
 
 typedef struct {
@@ -165,6 +175,7 @@ typedef struct {
   uint32_t max_frame_size;
   uint32_t max_header_list_size;
   uint32_t enable_connect_protocol;
+  uint32_t no_rfc7540_priorities;
 } nghttp2_settings_storage;
 
 typedef enum {
@@ -176,7 +187,9 @@ typedef enum {
   /* Flag means GOAWAY was sent */
   NGHTTP2_GOAWAY_SENT = 0x4,
   /* Flag means GOAWAY was received */
-  NGHTTP2_GOAWAY_RECV = 0x8
+  NGHTTP2_GOAWAY_RECV = 0x8,
+  /* Flag means GOAWAY has been submitted at least once */
+  NGHTTP2_GOAWAY_SUBMITTED = 0x10
 } nghttp2_goaway_flag;
 
 /* nghttp2_inflight_settings stores the SETTINGS entries which local
@@ -202,6 +215,12 @@ struct nghttp2_session {
      response) frame, which are subject to
      SETTINGS_MAX_CONCURRENT_STREAMS limit. */
   nghttp2_outbound_queue ob_syn;
+  /* Queues for DATA frames which is used when
+     SETTINGS_NO_RFC7540_PRIORITIES is enabled.  This implements RFC
+     9218 extensible prioritization scheme. */
+  struct {
+    nghttp2_pq ob_data;
+  } sched[NGHTTP2_EXTPRI_URGENCY_LEVELS];
   nghttp2_active_outbound_item aob;
   nghttp2_inbound_frame iframe;
   nghttp2_hd_deflater hd_deflater;
@@ -227,6 +246,12 @@ struct nghttp2_session {
   /* Queue of In-flight SETTINGS values.  SETTINGS bearing ACK is not
      considered as in-flight. */
   nghttp2_inflight_settings *inflight_settings_head;
+  /* Stream reset rate limiter.  If receiving excessive amount of
+     stream resets, GOAWAY will be sent. */
+  nghttp2_ratelim stream_reset_ratelim;
+  /* Sequential number across all streams to process streams in
+     FIFO. */
+  uint64_t stream_seq;
   /* The number of outgoing streams. This will be capped by
      remote_settings.max_concurrent_streams. */
   size_t num_outgoing_streams;
@@ -269,6 +294,12 @@ struct nghttp2_session {
   size_t max_send_header_block_length;
   /* The maximum number of settings accepted per SETTINGS frame. */
   size_t max_settings;
+  /* The maximum number of CONTINUATION frames following an incoming
+     HEADER frame. */
+  size_t max_continuations;
+  /* The number of CONTINUATION frames following an incoming HEADER
+     frame.  This variable is reset when END_HEADERS flag is seen. */
+  size_t num_continuations;
   /* Next Stream ID. Made unsigned int to detect >= (1 << 31). */
   uint32_t next_stream_id;
   /* The last stream ID this session initiated.  For client session,
@@ -328,6 +359,11 @@ struct nghttp2_session {
   /* Unacked local ENABLE_CONNECT_PROTOCOL value.  We use this to
      accept :protocol header field before SETTINGS_ACK is received. */
   uint8_t pending_enable_connect_protocol;
+  /* Unacked local SETTINGS_NO_RFC7540_PRIORITIES value, which is
+     effective before it is acknowledged. */
+  uint8_t pending_no_rfc7540_priorities;
+  /* Turn on fallback to RFC 7540 priorities; for server use only. */
+  uint8_t fallback_rfc7540_priorities;
   /* Nonzero if the session is server side. */
   uint8_t server;
   /* Flags indicating GOAWAY is sent and/or received. The flags are
@@ -772,6 +808,19 @@ int nghttp2_session_on_altsvc_received(nghttp2_session *session,
  */
 int nghttp2_session_on_origin_received(nghttp2_session *session,
                                        nghttp2_frame *frame);
+
+/*
+ * Called when PRIORITY_UPDATE is received, assuming |frame| is
+ * properly initialized.
+ *
+ * This function returns 0 if it succeeds, or one of the following
+ * negative error codes:
+ *
+ * NGHTTP2_ERR_CALLBACK_FAILURE
+ *     The callback function failed.
+ */
+int nghttp2_session_on_priority_update_received(nghttp2_session *session,
+                                                nghttp2_frame *frame);
 
 /*
  * Called when DATA is received, assuming |frame| is properly

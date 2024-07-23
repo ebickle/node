@@ -1,16 +1,15 @@
 import { Socket } from "net";
 import { URL } from "url";
-import { connector } from "./connector";
-import { HttpMethod } from "./dispatcher";
+import Connector from "./connector";
+import Dispatcher from "./dispatcher";
 
 declare namespace DiagnosticsChannel {
   interface Request {
     origin?: string | URL;
     completed: boolean;
-    method?: HttpMethod;
+    method?: Dispatcher.HttpMethod;
     path: string;
-    headers: string;
-    addHeader(key: string, value: string): Request;
+    headers: any;
   }
   interface Response {
     statusCode: number;
@@ -25,7 +24,7 @@ declare namespace DiagnosticsChannel {
     port: URL["port"];
     servername: string | null;
   }
-  type Connector = connector;
+  type Connector = Connector.connector;
   export interface RequestCreateMessage {
     request: Request;
   }

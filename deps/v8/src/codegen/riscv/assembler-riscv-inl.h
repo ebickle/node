@@ -52,9 +52,9 @@ void Assembler::CheckBuffer() {
 }
 
 // -----------------------------------------------------------------------------
-// RelocInfo.
+// WritableRelocInfo.
 
-void RelocInfo::apply(intptr_t delta) {
+void WritableRelocInfo::apply(intptr_t delta) {
   if (IsInternalReference(rmode_) || IsInternalReferenceEncoded(rmode_)) {
     // Absolute code pointer inside code object moves with the code object.
     Assembler::RelocateInternalReference(rmode_, pc_, delta);
@@ -65,8 +65,8 @@ void RelocInfo::apply(intptr_t delta) {
 }
 
 Address RelocInfo::target_address() {
-  DCHECK(IsCodeTargetMode(rmode_) || IsRuntimeEntry(rmode_) ||
-         IsWasmCall(rmode_));
+  DCHECK(IsCodeTargetMode(rmode_) || IsWasmCall(rmode_) ||
+         IsNearBuiltinEntry(rmode_) || IsWasmStubCall(rmode_));
   return Assembler::target_address_at(pc_, constant_pool_);
 }
 
@@ -128,9 +128,9 @@ Handle<HeapObject> Assembler::compressed_embedded_object_handle_at(
 }
 
 void Assembler::deserialization_set_special_target_at(
-    Address instruction_payload, Code code, Address target) {
+    Address instruction_payload, Tagged<Code> code, Address target) {
   set_target_address_at(instruction_payload,
-                        !code.is_null() ? code.constant_pool() : kNullAddress,
+                        !code.is_null() ? code->constant_pool() : kNullAddress,
                         target);
 }
 
@@ -159,24 +159,21 @@ void Assembler::deserialization_set_target_internal_reference_at(
   }
 }
 
-HeapObject RelocInfo::target_object(PtrComprCageBase cage_base) {
+Tagged<HeapObject> RelocInfo::target_object(PtrComprCageBase cage_base) {
   DCHECK(IsCodeTarget(rmode_) || IsEmbeddedObjectMode(rmode_));
-  if (IsDataEmbeddedObject(rmode_)) {
-    return HeapObject::cast(Object(ReadUnalignedValue<Address>(pc_)));
-  } else if (IsCompressedEmbeddedObject(rmode_)) {
-    return HeapObject::cast(Object(DecompressTaggedAny(
-        cage_base,
-        Assembler::target_compressed_address_at(pc_, constant_pool_))));
+  if (IsCompressedEmbeddedObject(rmode_)) {
+    return HeapObject::cast(
+        Tagged<Object>(V8HeapCompressionScheme::DecompressTagged(
+            cage_base,
+            Assembler::target_compressed_address_at(pc_, constant_pool_))));
   } else {
     return HeapObject::cast(
-        Object(Assembler::target_address_at(pc_, constant_pool_)));
+        Tagged<Object>(Assembler::target_address_at(pc_, constant_pool_)));
   }
 }
 
 Handle<HeapObject> RelocInfo::target_object_handle(Assembler* origin) {
-  if (IsDataEmbeddedObject(rmode_)) {
-    return Handle<HeapObject>::cast(ReadUnalignedValue<Handle<Object>>(pc_));
-  } else if (IsCodeTarget(rmode_)) {
+  if (IsCodeTarget(rmode_)) {
     return Handle<HeapObject>::cast(
         origin->code_target_object_handle_at(pc_, constant_pool_));
   } else if (IsCompressedEmbeddedObject(rmode_)) {
@@ -190,24 +187,24 @@ Handle<HeapObject> RelocInfo::target_object_handle(Assembler* origin) {
   }
 }
 
-void RelocInfo::set_target_object(Heap* heap, HeapObject target,
-                                  WriteBarrierMode write_barrier_mode,
-                                  ICacheFlushMode icache_flush_mode) {
+void WritableRelocInfo::set_target_object(Tagged<HeapObject> target,
+                                          ICacheFlushMode icache_flush_mode) {
   DCHECK(IsCodeTarget(rmode_) || IsEmbeddedObjectMode(rmode_));
-  if (IsDataEmbeddedObject(rmode_)) {
-    WriteUnalignedValue(pc_, target.ptr());
-    // No need to flush icache since no instructions were changed.
-  } else if (IsCompressedEmbeddedObject(rmode_)) {
+  if (IsCompressedEmbeddedObject(rmode_)) {
+    DCHECK(COMPRESS_POINTERS_BOOL);
+    // We must not compress pointers to objects outside of the main pointer
+    // compression cage as we wouldn't be able to decompress them with the
+    // correct cage base.
+    DCHECK_IMPLIES(V8_ENABLE_SANDBOX_BOOL, !IsTrustedSpaceObject(target));
+    DCHECK_IMPLIES(V8_EXTERNAL_CODE_SPACE_BOOL, !IsCodeSpaceObject(target));
     Assembler::set_target_compressed_address_at(
-        pc_, constant_pool_, CompressTagged(target.ptr()), icache_flush_mode);
+        pc_, constant_pool_,
+        V8HeapCompressionScheme::CompressObject(target.ptr()),
+        icache_flush_mode);
   } else {
     DCHECK(IsFullEmbeddedObject(rmode_));
     Assembler::set_target_address_at(pc_, constant_pool_, target.ptr(),
                                      icache_flush_mode);
-  }
-  if (write_barrier_mode == UPDATE_WRITE_BARRIER && !host().is_null() &&
-      !v8_flags.disable_write_barriers) {
-    WriteBarrierForCode(host(), this, target);
   }
 }
 
@@ -216,7 +213,7 @@ Address RelocInfo::target_external_reference() {
   return Assembler::target_address_at(pc_, constant_pool_);
 }
 
-void RelocInfo::set_target_external_reference(
+void WritableRelocInfo::set_target_external_reference(
     Address target, ICacheFlushMode icache_flush_mode) {
   DCHECK(rmode_ == RelocInfo::EXTERNAL_REFERENCE);
   Assembler::set_target_address_at(pc_, constant_pool_, target,
@@ -250,38 +247,24 @@ Handle<Code> Assembler::relative_code_target_object_handle_at(
   return Handle<Code>::cast(GetEmbeddedObject(code_target_index));
 }
 
-Builtin RelocInfo::target_builtin_at(Assembler* origin) { UNREACHABLE(); }
-
-Address RelocInfo::target_runtime_entry(Assembler* origin) {
-  DCHECK(IsRuntimeEntry(rmode_));
-  return target_address();
+Builtin Assembler::target_builtin_at(Address pc) {
+  Instr instr1 = Assembler::instr_at(pc);
+  Instr instr2 = Assembler::instr_at(pc + kInstrSize);
+  DCHECK(IsAuipc(instr1));
+  DCHECK(IsJalr(instr2));
+  int32_t builtin_id = BrachlongOffset(instr1, instr2);
+  DCHECK(Builtins::IsBuiltinId(builtin_id));
+  return static_cast<Builtin>(builtin_id);
 }
 
-void RelocInfo::set_target_runtime_entry(Address target,
-                                         WriteBarrierMode write_barrier_mode,
-                                         ICacheFlushMode icache_flush_mode) {
-  DCHECK(IsRuntimeEntry(rmode_));
-  if (target_address() != target)
-    set_target_address(target, write_barrier_mode, icache_flush_mode);
+Builtin RelocInfo::target_builtin_at(Assembler* origin) {
+  DCHECK(IsNearBuiltinEntry(rmode_));
+  return Assembler::target_builtin_at(pc_);
 }
 
 Address RelocInfo::target_off_heap_target() {
   DCHECK(IsOffHeapTarget(rmode_));
   return Assembler::target_address_at(pc_, constant_pool_);
-}
-
-void RelocInfo::WipeOut() {
-  DCHECK(IsFullEmbeddedObject(rmode_) || IsCodeTarget(rmode_) ||
-         IsRuntimeEntry(rmode_) || IsExternalReference(rmode_) ||
-         IsInternalReference(rmode_) || IsInternalReferenceEncoded(rmode_) ||
-         IsOffHeapTarget(rmode_));
-  if (IsInternalReference(rmode_)) {
-    Memory<Address>(pc_) = kNullAddress;
-  } else if (IsInternalReferenceEncoded(rmode_)) {
-    Assembler::set_target_internal_reference_encoded_at(pc_, kNullAddress);
-  } else {
-    Assembler::set_target_address_at(pc_, constant_pool_, kNullAddress);
-  }
 }
 
 EnsureSpace::EnsureSpace(Assembler* assembler) { assembler->CheckBuffer(); }

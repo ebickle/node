@@ -34,7 +34,6 @@ class CancelableTaskManager;
 class UnoptimizedCompileJob;
 class UnoptimizedCompileState;
 class FunctionLiteral;
-class Isolate;
 class ParseInfo;
 class ProducedPreparseData;
 class SharedFunctionInfo;
@@ -43,8 +42,6 @@ class Utf16CharacterStream;
 class WorkerThreadRuntimeCallStats;
 class Zone;
 
-template <typename T>
-class Handle;
 
 // The LazyCompileDispatcher uses a combination of idle tasks and background
 // tasks to parse and compile lazily parsed functions.
@@ -189,7 +186,8 @@ class V8_EXPORT_PRIVATE LazyCompileDispatcher {
 
   std::unique_ptr<JobHandle> job_handle_;
 
-  // Copy of FLAG_trace_compiler_dispatcher to allow for access from any thread.
+  // Copy of v8_flags.trace_compiler_dispatcher to allow for access from any
+  // thread.
   bool trace_compiler_dispatcher_;
 
   std::unique_ptr<CancelableTaskManager> idle_task_manager_;

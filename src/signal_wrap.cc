@@ -104,7 +104,7 @@ class SignalWrap : public HandleWrap {
 
   static void Start(const FunctionCallbackInfo<Value>& args) {
     SignalWrap* wrap;
-    ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
+    ASSIGN_OR_RETURN_UNWRAP(&wrap, args.This());
     Environment* env = wrap->env();
     int signum;
     if (!args[0]->Int32Value(env->context()).To(&signum)) return;
@@ -142,7 +142,7 @@ class SignalWrap : public HandleWrap {
 
   static void Stop(const FunctionCallbackInfo<Value>& args) {
     SignalWrap* wrap;
-    ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
+    ASSIGN_OR_RETURN_UNWRAP(&wrap, args.This());
 
     if (wrap->active_)  {
       wrap->active_ = false;
@@ -174,7 +174,6 @@ bool HasSignalJSHandler(int signum) {
 }
 }  // namespace node
 
-
-NODE_MODULE_CONTEXT_AWARE_INTERNAL(signal_wrap, node::SignalWrap::Initialize)
-NODE_MODULE_EXTERNAL_REFERENCE(signal_wrap,
-                               node::SignalWrap::RegisterExternalReferences)
+NODE_BINDING_CONTEXT_AWARE_INTERNAL(signal_wrap, node::SignalWrap::Initialize)
+NODE_BINDING_EXTERNAL_REFERENCE(signal_wrap,
+                                node::SignalWrap::RegisterExternalReferences)

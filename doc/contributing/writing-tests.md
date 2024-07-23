@@ -46,7 +46,7 @@ const server = http.createServer(common.mustCall((req, res) => {       // 11
 server.listen(0, () => {                                               // 14
   http.get({                                                           // 15
     port: server.address().port,                                       // 16
-    headers: { 'Test': 'Düsseldorf' }                                  // 17
+    headers: { 'Test': 'Düsseldorf' },                                 // 17
   }, common.mustCall((res) => {                                        // 18
     assert.strictEqual(res.statusCode, 200);                           // 19
     server.close();                                                    // 20
@@ -116,7 +116,7 @@ const server = http.createServer(common.mustCall((req, res) => {
 server.listen(0, () => {
   http.get({
     port: server.address().port,
-    headers: { 'Test': 'Düsseldorf' }
+    headers: { 'Test': 'Düsseldorf' },
   }, common.mustCall((res) => {
     assert.strictEqual(res.statusCode, 200);
     server.close();
@@ -192,7 +192,7 @@ const server = http.createServer((req, res) => {
   listening++;
   const options = {
     agent: null,
-    port: server.address().port
+    port: server.address().port,
   };
   http.get(options, (res) => {
     response++;
@@ -214,7 +214,7 @@ const server = http.createServer(common.mustCall((req, res) => {
 })).listen(0, common.mustCall(() => {
   const options = {
     agent: null,
-    port: server.address().port
+    port: server.address().port,
   };
   http.get(options, common.mustCall((res) => {
     res.resume();
@@ -262,7 +262,7 @@ const fs = require('node:fs').promises;
 // Wrap the `onFulfilled` handler in `common.mustCall()`.
 fs.readFile('test-file').then(
   common.mustCall(
-    (content) => assert.strictEqual(content.toString(), 'test2')
+    (content) => assert.strictEqual(content.toString(), 'test2'),
   ));
 ```
 
@@ -287,7 +287,7 @@ const freelist = require('node:internal/freelist');
 In specific scenarios it may be useful to get a hold of `primordials` or
 `internalBinding()`. You can do so using
 
-```console
+```bash
 node --expose-internals -r internal/test/binding lib/fs.js
 ```
 
@@ -308,7 +308,7 @@ assert.throws(
   () => {
     throw new Error('Wrong value');
   },
-  /^Error: Wrong value$/ // Instead of something like /Wrong value/
+  /^Error: Wrong value$/, // Instead of something like /Wrong value/
 );
 ```
 
@@ -319,7 +319,7 @@ assert.throws(
   () => {
     throw new ERR_FS_FILE_TOO_LARGE(`${sizeKiB} Kb`);
   },
-  { code: 'ERR_FS_FILE_TOO_LARGE' }
+  { code: 'ERR_FS_FILE_TOO_LARGE' },
   // Do not include message: /^File size ([0-9]+ Kb) is greater than 2 GiB$/
 );
 ```
@@ -439,20 +439,20 @@ adding them to the `libraries` section in the cctest target.
 
 The test can be executed by running the `cctest` target:
 
-```console
-$ make cctest
+```bash
+make cctest
 ```
 
 A filter can be applied to run single/multiple test cases:
 
-```console
-$ make cctest GTEST_FILTER=EnvironmentTest.AtExitWithArgument
+```bash
+make cctest GTEST_FILTER=EnvironmentTest.AtExitWithArgument
 ```
 
 `cctest` can also be run directly which can be useful when debugging:
 
-```console
-$ out/Release/cctest --gtest_filter=EnvironmentTest.AtExit\*
+```bash
+out/Release/cctest --gtest_filter=EnvironmentTest.AtExit\*
 ```
 
 ### Node.js test fixture

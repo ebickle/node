@@ -42,12 +42,10 @@ situations. These scripts happen in addition to the `pre<event>`, `post<event>`,
 * `prepare`, `prepublish`, `prepublishOnly`, `prepack`, `postpack`, `dependencies`
 
 **prepare** (since `npm@4.0.0`)
-* Runs any time before the package is packed, i.e. during `npm publish`
+* Runs BEFORE the package is packed, i.e. during `npm publish`
     and `npm pack`
-* Runs BEFORE the package is packed
-* Runs BEFORE the package is published
 * Runs on local `npm install` without any arguments
-* Run AFTER `prepublish`, but BEFORE `prepublishOnly`
+* Runs AFTER `prepublish`, but BEFORE `prepublishOnly`
 
 * NOTE: If a package being installed through git contains a `prepare`
  script, its `dependencies` and `devDependencies` will be installed, and
@@ -65,7 +63,7 @@ situations. These scripts happen in addition to the `pre<event>`, `post<event>`,
 * Runs BEFORE the package is prepared and packed, ONLY on `npm publish`.
 
 **prepack**
-* Runs BEFORE a tarball is packed (on "`npm pack`", "`npm publish`", and when installing a git dependencies).
+* Runs BEFORE a tarball is packed (on "`npm pack`", "`npm publish`", and when installing a git dependency).
 * NOTE: "`npm run pack`" is NOT the same as "`npm pack`". "`npm run pack`" is an arbitrary user defined script name, where as, "`npm pack`" is a CLI defined command.
 
 **postpack**
@@ -160,8 +158,6 @@ These are run from the scripts of `<pkg-name>`
 * `postpack`
 * `publish`
 * `postpublish`
-
-`prepare` will not run during `--dry-run`
 
 #### [`npm rebuild`](/commands/npm-rebuild)
 
@@ -298,18 +294,15 @@ For example, if your package.json contains this:
 {
   "scripts" : {
     "install" : "scripts/install.js",
-    "postinstall" : "scripts/install.js",
-    "uninstall" : "scripts/uninstall.js"
+    "postinstall" : "scripts/install.js"
   }
 }
 ```
 
-then `scripts/install.js` will be called for the install
-and post-install stages of the lifecycle, and `scripts/uninstall.js`
-will be called when the package is uninstalled.  Since
-`scripts/install.js` is running for two different phases, it would
-be wise in this case to look at the `npm_lifecycle_event` environment
-variable.
+then `scripts/install.js` will be called for the install and post-install
+stages of the lifecycle.  Since `scripts/install.js` is running for two
+different phases, it would be wise in this case to look at the
+`npm_lifecycle_event` environment variable.
 
 If you want to run a make command, you can do so.  This works just
 fine:
@@ -338,10 +331,8 @@ file.
 ### Best Practices
 
 * Don't exit with a non-zero error code unless you *really* mean it.
-  Except for uninstall scripts, this will cause the npm action to
-  fail, and potentially be rolled back.  If the failure is minor or
-  only will prevent some optional features, then it's better to just
-  print a warning and exit successfully.
+  If the failure is minor or only will prevent some optional features, then
+  it's better to just print a warning and exit successfully.
 * Try not to use scripts to do what npm can do for you.  Read through
   [`package.json`](/configuring-npm/package-json) to see all the things that you can specify and enable
   by simply describing your package appropriately.  In general, this

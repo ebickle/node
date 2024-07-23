@@ -1,2 +1,3 @@
 #!/usr/bin/env node
-require('./corepack').runMain(['yarnpkg', ...process.argv.slice(2)]);
+process.env.COREPACK_ENABLE_DOWNLOAD_PROMPT??='1'
+require('./lib/corepack.cjs').runMain(['yarnpkg', ...process.argv.slice(2)]);

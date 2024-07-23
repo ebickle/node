@@ -5,8 +5,10 @@
 #ifndef V8_OBJECTS_OPTION_UTILS_H_
 #define V8_OBJECTS_OPTION_UTILS_H_
 
+#include "src/common/globals.h"
 #include "src/execution/isolate.h"
-#include "src/objects/objects.h"
+#include "src/objects/js-objects.h"
+#include "src/objects/string.h"
 
 namespace v8 {
 namespace internal {
@@ -76,8 +78,8 @@ V8_WARN_UNUSED_RESULT static Maybe<T> GetStringOrBooleanOption(
     const std::vector<T>& enum_values, T true_value, T false_value,
     T fallback_value) {
   DCHECK_EQ(str_values.size(), enum_values.size());
-  Handle<String> property_str =
-      isolate->factory()->NewStringFromAsciiChecked(property);
+  Factory* factory = isolate->factory();
+  Handle<String> property_str = factory->NewStringFromAsciiChecked(property);
 
   // 1. Let value be ? Get(options, property).
   Handle<Object> value;
@@ -86,15 +88,15 @@ V8_WARN_UNUSED_RESULT static Maybe<T> GetStringOrBooleanOption(
       Object::GetPropertyOrElement(isolate, options, property_str),
       Nothing<T>());
   // 2. If value is undefined, then return fallback.
-  if (value->IsUndefined(isolate)) {
+  if (IsUndefined(*value, isolate)) {
     return Just(fallback_value);
   }
   // 3. If value is true, then return trueValue.
-  if (value->IsTrue(isolate)) {
+  if (IsTrue(*value, isolate)) {
     return Just(true_value);
   }
   // 4. Let valueBoolean be ToBoolean(value).
-  bool valueBoolean = value->BooleanValue(isolate);
+  bool valueBoolean = Object::BooleanValue(*value, isolate);
   // 5. If valueBoolean is false, then return valueBoolean.
   if (!valueBoolean) {
     return Just(false_value);
@@ -104,8 +106,14 @@ V8_WARN_UNUSED_RESULT static Maybe<T> GetStringOrBooleanOption(
   // 6. Let value be ? ToString(value).
   ASSIGN_RETURN_ON_EXCEPTION_VALUE(
       isolate, value_str, Object::ToString(isolate, value), Nothing<T>());
-  // If values does not contain an element equal to value, return fallback.
-  // 8. Return value.
+  // 7. If value is *"true"* or *"false"*, return _fallback_.
+  if (String::Equals(isolate, value_str, factory->true_string()) ||
+      String::Equals(isolate, value_str, factory->false_string())) {
+    return Just(fallback_value);
+  }
+  // 8. If values does not contain an element equal to _value_, throw a
+  // *RangeError* exception.
+  // 9. Return value.
   value_str = String::Flatten(isolate, value_str);
   {
     DisallowGarbageCollection no_gc;
@@ -127,7 +135,11 @@ V8_WARN_UNUSED_RESULT static Maybe<T> GetStringOrBooleanOption(
       }
     }
   }  // end of no_gc
-  return Just(fallback_value);
+  THROW_NEW_ERROR_RETURN_VALUE(
+      isolate,
+      NewRangeError(MessageTemplate::kValueOutOfRange, value,
+                    factory->NewStringFromAsciiChecked(method), property_str),
+      Nothing<T>());
 }
 
 // ECMA402 9.2.10. GetOption( options, property, type, values, fallback)

@@ -19,6 +19,7 @@ namespace internal {
 namespace compiler {
 
 class MachineGraph;
+class SourcePositionTable;
 
 struct NodeWithType {
   NodeWithType() : node(nullptr), type(wasm::kWasmVoid, nullptr) {}
@@ -35,15 +36,18 @@ struct NodeWithType {
   wasm::TypeInModule type;
 };
 
-// This class optimizes away wasm-gc nodes based on the types of their
-// arguments. Although types have been assigned to nodes already, this class
-// also tracks additional type information along control paths.
+// This class optimizes away wasm-gc type checks and casts. Two types of
+// information are used:
+// - Types already marked on graph nodes.
+// - Path-dependent type information that is inferred when a type check is used
+//   as a branch condition.
 class WasmGCOperatorReducer final
     : public AdvancedReducerWithControlPathState<NodeWithType,
                                                  kMultipleInstances> {
  public:
   WasmGCOperatorReducer(Editor* editor, Zone* temp_zone_, MachineGraph* mcgraph,
-                        const wasm::WasmModule* module);
+                        const wasm::WasmModule* module,
+                        SourcePositionTable* source_position_table);
 
   const char* reducer_name() const override { return "WasmGCOperatorReducer"; }
 
@@ -52,16 +56,28 @@ class WasmGCOperatorReducer final
  private:
   using ControlPathTypes = ControlPathState<NodeWithType, kMultipleInstances>;
 
+  Reduction ReduceWasmStructOperation(Node* node);
+  Reduction ReduceWasmArrayLength(Node* node);
   Reduction ReduceAssertNotNull(Node* node);
   Reduction ReduceCheckNull(Node* node);
   Reduction ReduceWasmTypeCheck(Node* node);
+  Reduction ReduceWasmTypeCheckAbstract(Node* node);
   Reduction ReduceWasmTypeCast(Node* node);
+  Reduction ReduceWasmTypeCastAbstract(Node* node);
+  Reduction ReduceTypeGuard(Node* node);
+  Reduction ReduceWasmAnyConvertExtern(Node* node);
   Reduction ReduceMerge(Node* node);
   Reduction ReduceIf(Node* node, bool condition);
   Reduction ReduceStart(Node* node);
 
   Node* SetType(Node* node, wasm::ValueType type);
-  wasm::TypeInModule ObjectTypeFromContext(Node* object, Node* control);
+  void UpdateSourcePosition(Node* new_node, Node* old_node);
+  // Returns the intersection of the type marked on {object} and the type
+  // information about object tracked on {control}'s control path (if present).
+  // If {allow_non_wasm}, we bail out if the object's type is not a wasm type
+  // by returning bottom.
+  wasm::TypeInModule ObjectTypeFromContext(Node* object, Node* control,
+                                           bool allow_non_wasm = false);
   Reduction UpdateNodeAndAliasesTypes(Node* state_owner,
                                       ControlPathTypes parent_state, Node* node,
                                       wasm::TypeInModule type,
@@ -69,10 +85,12 @@ class WasmGCOperatorReducer final
 
   Graph* graph() { return mcgraph_->graph(); }
   CommonOperatorBuilder* common() { return mcgraph_->common(); }
+  SimplifiedOperatorBuilder* simplified() { return gasm_.simplified(); }
 
   MachineGraph* mcgraph_;
   WasmGraphAssembler gasm_;
   const wasm::WasmModule* module_;
+  SourcePositionTable* source_position_table_;
 };
 
 }  // namespace compiler

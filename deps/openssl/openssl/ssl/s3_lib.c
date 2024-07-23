@@ -3365,6 +3365,10 @@ void ssl3_free(SSL *s)
     OPENSSL_free(s->s3.alpn_selected);
     OPENSSL_free(s->s3.alpn_proposed);
 
+#ifndef OPENSSL_NO_PSK
+    OPENSSL_free(s->s3.tmp.psk);
+#endif
+
 #ifndef OPENSSL_NO_SRP
     ssl_srp_ctx_free_intern(s);
 #endif
@@ -4301,9 +4305,10 @@ const SSL_CIPHER *ssl3_choose_cipher(SSL *s, STACK_OF(SSL_CIPHER) *clnt,
 
             if (prefer_sha256) {
                 const SSL_CIPHER *tmp = sk_SSL_CIPHER_value(allow, ii);
+                const EVP_MD *md = ssl_md(s->ctx, tmp->algorithm2);
 
-                if (EVP_MD_is_a(ssl_md(s->ctx, tmp->algorithm2),
-                                       OSSL_DIGEST_NAME_SHA2_256)) {
+                if (md != NULL
+                        && EVP_MD_is_a(md, OSSL_DIGEST_NAME_SHA2_256)) {
                     ret = tmp;
                     break;
                 }

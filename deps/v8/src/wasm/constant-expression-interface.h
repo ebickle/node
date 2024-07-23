@@ -16,23 +16,25 @@
 namespace v8 {
 namespace internal {
 
-class WasmInstanceObject;
+class WasmTrustedInstanceData;
 class JSArrayBuffer;
 
 namespace wasm {
 
-// An interface for WasmFullDecoder used to decode constant expressions. This
-// interface has two modes: only validation (when {isolate_ == nullptr}), which
-// is used in module-decoder, and code-generation (when {isolate_ != nullptr}),
-// which is used in module-instantiate. We merge two distinct functionalities
-// in one class to reduce the number of WasmFullDecoder instantiations, and thus
-// V8 binary code size.
+// An interface for WasmFullDecoder used to decode constant expressions.
+// This interface has two modes: only validation (when {isolate_ == nullptr}),
+// and code-generation (when {isolate_ != nullptr}). We merge two distinct
+// functionalities in one class to reduce the number of WasmFullDecoder
+// instantiations, and thus V8 binary code size.
+// In code-generation mode, the result can be retrieved with {computed_value()}
+// if {!has_error()}, or with {error()} otherwise.
 class V8_EXPORT_PRIVATE ConstantExpressionInterface {
  public:
-  static constexpr Decoder::ValidateFlag validate = Decoder::kFullValidation;
+  using ValidationTag = Decoder::FullValidationTag;
   static constexpr DecodingMode decoding_mode = kConstantExpression;
+  static constexpr bool kUsesPoppedArgs = true;
 
-  struct Value : public ValueBase<validate> {
+  struct Value : public ValueBase<ValidationTag> {
     WasmValue runtime_value;
 
     template <typename... Args>
@@ -40,16 +42,18 @@ class V8_EXPORT_PRIVATE ConstantExpressionInterface {
         : ValueBase(std::forward<Args>(args)...) {}
   };
 
-  using Control = ControlBase<Value, validate>;
+  using Control = ControlBase<Value, ValidationTag>;
   using FullDecoder =
-      WasmFullDecoder<validate, ConstantExpressionInterface, decoding_mode>;
+      WasmFullDecoder<ValidationTag, ConstantExpressionInterface,
+                      decoding_mode>;
 
-  ConstantExpressionInterface(const WasmModule* module, Isolate* isolate,
-                              Handle<WasmInstanceObject> instance)
+  ConstantExpressionInterface(
+      const WasmModule* module, Isolate* isolate,
+      Handle<WasmTrustedInstanceData> trusted_instance_data)
       : module_(module),
         outer_module_(nullptr),
         isolate_(isolate),
-        instance_(instance) {
+        trusted_instance_data_(trusted_instance_data) {
     DCHECK_NOT_NULL(isolate);
   }
 
@@ -93,7 +97,7 @@ class V8_EXPORT_PRIVATE ConstantExpressionInterface {
   const WasmModule* module_;
   WasmModule* outer_module_;
   Isolate* isolate_;
-  Handle<WasmInstanceObject> instance_;
+  Handle<WasmTrustedInstanceData> trusted_instance_data_;
 };
 
 }  // namespace wasm

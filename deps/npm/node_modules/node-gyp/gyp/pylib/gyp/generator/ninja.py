@@ -1583,7 +1583,7 @@ class NinjaWriter:
         elif spec["type"] == "static_library":
             self.target.binary = self.ComputeOutput(spec)
             if (
-                self.flavor not in ("mac", "openbsd", "netbsd", "win")
+                self.flavor not in ("ios", "mac", "netbsd", "openbsd", "win")
                 and not self.is_standalone_static_library
             ):
                 self.ninja.build(
@@ -1815,10 +1815,7 @@ class NinjaWriter:
             "executable": default_variables["EXECUTABLE_SUFFIX"],
         }
         extension = spec.get("product_extension")
-        if extension:
-            extension = "." + extension
-        else:
-            extension = DEFAULT_EXTENSION.get(type, "")
+        extension = "." + extension if extension else DEFAULT_EXTENSION.get(type, "")
 
         if "product_name" in spec:
             # If we were given an explicit name, use that.
@@ -2112,8 +2109,8 @@ def GetDefaultConcurrentLinks():
         ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
 
         # VS 2015 uses 20% more working set than VS 2013 and can consume all RAM
-        # on a 64 GB machine.
-        mem_limit = max(1, stat.ullTotalPhys // (5 * (2 ** 30)))  # total / 5GB
+        # on a 64 GiB machine.
+        mem_limit = max(1, stat.ullTotalPhys // (5 * (2 ** 30)))  # total / 5GiB
         hard_cap = max(1, int(os.environ.get("GYP_LINK_CONCURRENCY_MAX", 2 ** 32)))
         return min(mem_limit, hard_cap)
     elif sys.platform.startswith("linux"):
@@ -2496,7 +2493,7 @@ def GenerateOutputForConfig(target_list, target_dicts, data, params, config_name
             ),
         )
 
-    if flavor != "mac" and flavor != "win":
+    if flavor not in ("ios", "mac", "win"):
         master_ninja.rule(
             "alink",
             description="AR $out",
@@ -2533,7 +2530,7 @@ def GenerateOutputForConfig(target_list, target_dicts, data, params, config_name
             description="SOLINK $lib",
             restat=True,
             command=mtime_preserving_solink_base
-            % {"suffix": "@$link_file_list"},  # noqa: E501
+            % {"suffix": "@$link_file_list"},
             rspfile="$link_file_list",
             rspfile_content=(
                 "-Wl,--whole-archive $in $solibs -Wl," "--no-whole-archive $libs"

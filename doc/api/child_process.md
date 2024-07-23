@@ -272,7 +272,7 @@ const { exec } = require('node:child_process');
 const controller = new AbortController();
 const { signal } = controller;
 const child = exec('grep ssh', { signal }, (error) => {
-  console.log(error); // an AbortError
+  console.error(error); // an AbortError
 });
 controller.abort();
 ```
@@ -384,7 +384,7 @@ const { execFile } = require('node:child_process');
 const controller = new AbortController();
 const { signal } = controller;
 const child = execFile('node', ['--version'], { signal }, (error) => {
-  console.log(error); // an AbortError
+  console.error(error); // an AbortError
 });
 controller.abort();
 ```
@@ -606,7 +606,7 @@ A third argument may be used to specify additional options, with these defaults:
 ```js
 const defaults = {
   cwd: undefined,
-  env: process.env
+  env: process.env,
 };
 ```
 
@@ -749,7 +749,7 @@ const { spawn } = require('node:child_process');
 
 const subprocess = spawn(process.argv[0], ['child_program.js'], {
   detached: true,
-  stdio: 'ignore'
+  stdio: 'ignore',
 });
 
 subprocess.unref();
@@ -765,7 +765,7 @@ const err = fs.openSync('./out.log', 'a');
 
 const subprocess = spawn('prg', [], {
   detached: true,
-  stdio: [ 'ignore', out, err ]
+  stdio: [ 'ignore', out, err ],
 });
 
 subprocess.unref();
@@ -842,7 +842,7 @@ pipes between the parent and child. The value is one of the following:
    file, socket, or a pipe with the child process. The stream's underlying
    file descriptor is duplicated in the child process to the fd that
    corresponds to the index in the `stdio` array. The stream must have an
-   underlying descriptor (file streams do not until the `'open'` event has
+   underlying descriptor (file streams do not start until the `'open'` event has
    occurred).
 7. Positive integer: The integer value is interpreted as a file descriptor
    that is open in the parent process. It is shared with the child
@@ -872,12 +872,6 @@ is launched with the IPC channel unreferenced (using `unref()`) until the
 child registers an event handler for the [`'disconnect'`][] event
 or the [`'message'`][] event. This allows the child to exit
 normally without the process being held open by the open IPC channel._
-
-On Unix-like operating systems, the [`child_process.spawn()`][] method
-performs memory operations synchronously before decoupling the event loop
-from the child. Applications with a large memory footprint may find frequent
-[`child_process.spawn()`][] calls to be a bottleneck. For more information,
-see [V8 issue 7381](https://bugs.chromium.org/p/v8/issues/detail?id=7381).
 
 See also: [`child_process.exec()`][] and [`child_process.fork()`][].
 
@@ -925,9 +919,10 @@ changes:
 * `options` {Object}
   * `cwd` {string|URL} Current working directory of the child process.
   * `input` {string|Buffer|TypedArray|DataView} The value which will be passed
-    as stdin to the spawned process. Supplying this value will override
-    `stdio[0]`.
-  * `stdio` {string|Array} Child's stdio configuration. `stderr` by default will
+    as stdin to the spawned process. If `stdio[0]` is set to `'pipe'`, Supplying
+    this value will override `stdio[0]`.
+  * `stdio` {string|Array} Child's stdio configuration.
+    See [`child_process.spawn()`][]'s [`stdio`][]. `stderr` by default will
     be output to the parent process' stderr unless `stdio` is specified.
     **Default:** `'pipe'`.
   * `env` {Object} Environment key-value pairs. **Default:** `process.env`.
@@ -968,6 +963,34 @@ If the process times out or has a non-zero exit code, this method will throw an
 function. Any input containing shell metacharacters may be used to trigger
 arbitrary command execution.**
 
+```js
+const { execFileSync } = require('node:child_process');
+
+try {
+  const stdout = execFileSync('my-script.sh', ['my-arg'], {
+    // Capture stdout and stderr from child process. Overrides the
+    // default behavior of streaming child stderr to the parent stderr
+    stdio: 'pipe',
+
+    // Use utf8 encoding for stdio pipes
+    encoding: 'utf8',
+  });
+
+  console.log(stdout);
+} catch (err) {
+  if (err.code) {
+    // Spawning child process failed
+    console.error(err.code);
+  } else {
+    // Child was spawned but exited with non-zero exit code
+    // Error contains any stdout and stderr from the child
+    const { stdout, stderr } = err;
+
+    console.error({ stdout, stderr });
+  }
+}
+```
+
 ### `child_process.execSync(command[, options])`
 
 <!-- YAML
@@ -995,9 +1018,10 @@ changes:
 * `options` {Object}
   * `cwd` {string|URL} Current working directory of the child process.
   * `input` {string|Buffer|TypedArray|DataView} The value which will be passed
-    as stdin to the spawned process. Supplying this value will override
-    `stdio[0]`.
-  * `stdio` {string|Array} Child's stdio configuration. `stderr` by default will
+    as stdin to the spawned process. If `stdio[0]` is set to `'pipe'`, Supplying
+    this value will override `stdio[0]`.
+  * `stdio` {string|Array} Child's stdio configuration.
+    See [`child_process.spawn()`][]'s [`stdio`][]. `stderr` by default will
     be output to the parent process' stderr unless `stdio` is specified.
     **Default:** `'pipe'`.
   * `env` {Object} Environment key-value pairs. **Default:** `process.env`.
@@ -1071,11 +1095,12 @@ changes:
 * `options` {Object}
   * `cwd` {string|URL} Current working directory of the child process.
   * `input` {string|Buffer|TypedArray|DataView} The value which will be passed
-    as stdin to the spawned process. Supplying this value will override
-    `stdio[0]`.
+    as stdin to the spawned process. If `stdio[0]` is set to `'pipe'`, Supplying
+    this value will override `stdio[0]`.
   * `argv0` {string} Explicitly set the value of `argv[0]` sent to the child
     process. This will be set to `command` if not specified.
   * `stdio` {string|Array} Child's stdio configuration.
+    See [`child_process.spawn()`][]'s [`stdio`][]. **Default:** `'pipe'`.
   * `env` {Object} Environment key-value pairs. **Default:** `process.env`.
   * `uid` {number} Sets the user identity of the process (see setuid(2)).
   * `gid` {number} Sets the group identity of the process (see setgid(2)).
@@ -1186,9 +1211,10 @@ property is `false`.
 
 The `'error'` event is emitted whenever:
 
-1. The process could not be spawned, or
-2. The process could not be killed, or
-3. Sending a message to the child process failed.
+* The process could not be spawned.
+* The process could not be killed.
+* Sending a message to the child process failed.
+* The child process was aborted via the `signal` option.
 
 The `'exit'` event may or may not fire after an error has occurred. When
 listening to both the `'exit'` and `'error'` events, guard
@@ -1227,8 +1253,8 @@ added: v0.5.9
 -->
 
 * `message` {Object} A parsed JSON object or primitive value.
-* `sendHandle` {Handle} A [`net.Socket`][] or [`net.Server`][] object, or
-  undefined.
+* `sendHandle` {Handle|undefined} `undefined` or a [`net.Socket`][],
+  [`net.Server`][], or [`dgram.Socket`][] object.
 
 The `'message'` event is triggered when a child process uses
 [`process.send()`][] to send messages.
@@ -1392,14 +1418,26 @@ const subprocess = spawn(
       console.log(process.pid, 'is alive')
     }, 500);"`,
   ], {
-    stdio: ['inherit', 'inherit', 'inherit']
-  }
+    stdio: ['inherit', 'inherit', 'inherit'],
+  },
 );
 
 setTimeout(() => {
   subprocess.kill(); // Does not terminate the Node.js process in the shell.
 }, 2000);
 ```
+
+### `subprocess[Symbol.dispose]()`
+
+<!-- YAML
+added:
+ - v20.5.0
+ - v18.18.0
+-->
+
+> Stability: 1 - Experimental
+
+Calls [`subprocess.kill()`][] with `'SIGTERM'`.
 
 ### `subprocess.killed`
 
@@ -1449,7 +1487,7 @@ const { spawn } = require('node:child_process');
 
 const subprocess = spawn(process.argv[0], ['child_program.js'], {
   detached: true,
-  stdio: 'ignore'
+  stdio: 'ignore',
 });
 
 subprocess.unref();
@@ -1474,7 +1512,8 @@ changes:
 -->
 
 * `message` {Object}
-* `sendHandle` {Handle}
+* `sendHandle` {Handle|undefined} `undefined`, or a [`net.Socket`][],
+  [`net.Server`][], or [`dgram.Socket`][] object.
 * `options` {Object} The `options` argument, if present, is an object used to
   parameterize the sending of certain types of handles. `options` supports
   the following properties:
@@ -1532,7 +1571,8 @@ The optional `sendHandle` argument that may be passed to `subprocess.send()` is
 for passing a TCP server or socket object to the child process. The child will
 receive the object as the second argument passed to the callback function
 registered on the [`'message'`][] event. Any data that is received
-and buffered in the socket will not be sent to the child.
+and buffered in the socket will not be sent to the child. Sending IPC sockets is
+not supported on Windows.
 
 The optional `callback` is a function that is invoked after the message is
 sent but before the child may have received it. The function is called with a
@@ -1733,7 +1773,7 @@ const subprocess = child_process.spawn('ls', {
     0, // Use parent's stdin for child.
     'pipe', // Pipe child's stdout to parent.
     fs.openSync('err.out', 'w'), // Direct child's stderr to a file.
-  ]
+  ],
 });
 
 assert.strictEqual(subprocess.stdio[0], null);
@@ -1796,7 +1836,7 @@ const { spawn } = require('node:child_process');
 
 const subprocess = spawn(process.argv[0], ['child_program.js'], {
   detached: true,
-  stdio: 'ignore'
+  stdio: 'ignore',
 });
 
 subprocess.unref();
@@ -1865,6 +1905,7 @@ or [`child_process.fork()`][].
 [`child_process.fork()`]: #child_processforkmodulepath-args-options
 [`child_process.spawn()`]: #child_processspawncommand-args-options
 [`child_process.spawnSync()`]: #child_processspawnsynccommand-args-options
+[`dgram.Socket`]: dgram.md#class-dgramsocket
 [`maxBuffer` and Unicode]: #maxbuffer-and-unicode
 [`net.Server`]: net.md#class-netserver
 [`net.Socket`]: net.md#class-netsocket

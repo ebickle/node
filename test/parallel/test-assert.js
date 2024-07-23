@@ -1,4 +1,3 @@
-// Flags: --expose-internals
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -26,7 +25,6 @@ const common = require('../common');
 const assert = require('assert');
 const { inspect } = require('util');
 const vm = require('vm');
-const { internalBinding } = require('internal/test/binding');
 const a = assert;
 
 // Disable colored output to prevent color codes from breaking assertion
@@ -478,7 +476,7 @@ assert.throws(() => {
 {
   // Bad args to AssertionError constructor should throw TypeError.
   const args = [1, true, false, '', null, Infinity, Symbol('test'), undefined];
-  args.forEach((input) => {
+  for (const input of args) {
     assert.throws(
       () => new assert.AssertionError(input),
       {
@@ -487,7 +485,7 @@ assert.throws(() => {
         message: 'The "options" argument must be of type object.' +
                  common.invalidArgTypeHelper(input)
       });
-  });
+  }
 }
 
 assert.throws(
@@ -727,6 +725,61 @@ assert.throws(
   }
 );
 assert.throws(
+  () => {
+    // This test case checks if `try` left brace without a line break
+    // before the assertion causes any wrong assertion message.
+    // Therefore, don't reformat the following code.
+    // Refs: https://github.com/nodejs/node/issues/30872
+    try { assert.ok(0);   // eslint-disable-line no-useless-catch, @stylistic/js/brace-style
+    } catch (err) {
+      throw err;
+    }
+  },
+  {
+    code: 'ERR_ASSERTION',
+    constructor: assert.AssertionError,
+    generatedMessage: true,
+    message: 'The expression evaluated to a falsy value:\n\n  ' +
+             'assert.ok(0)\n'
+  }
+);
+assert.throws(
+  () => {
+    try {
+      throw new Error();
+    // This test case checks if `catch` left brace without a line break
+    // before the assertion causes any wrong assertion message.
+    // Therefore, don't reformat the following code.
+    // Refs: https://github.com/nodejs/node/issues/30872
+    } catch (err) { assert.ok(0); }     // eslint-disable-line no-unused-vars
+  },
+  {
+    code: 'ERR_ASSERTION',
+    constructor: assert.AssertionError,
+    generatedMessage: true,
+    message: 'The expression evaluated to a falsy value:\n\n  ' +
+             'assert.ok(0)\n'
+  }
+);
+assert.throws(
+  () => {
+    // This test case checks if `function` left brace without a line break
+    // before the assertion causes any wrong assertion message.
+    // Therefore, don't reformat the following code.
+    // Refs: https://github.com/nodejs/node/issues/30872
+    function test() { assert.ok(0);     // eslint-disable-line @stylistic/js/brace-style
+    }
+    test();
+  },
+  {
+    code: 'ERR_ASSERTION',
+    constructor: assert.AssertionError,
+    generatedMessage: true,
+    message: 'The expression evaluated to a falsy value:\n\n  ' +
+             'assert.ok(0)\n'
+  }
+);
+assert.throws(
   () => assert(typeof 123n === 'string'),
   {
     code: 'ERR_ASSERTION',
@@ -747,42 +800,11 @@ assert.throws(
   }
 );
 
-{
-  // Test caching.
-  const fs = internalBinding('fs');
-  const tmp = fs.close;
-  fs.close = common.mustCall(tmp, 1);
-  function throwErr() {
-    assert(
-      (Buffer.from('test') instanceof Error)
-    );
-  }
-  assert.throws(
-    () => throwErr(),
-    {
-      code: 'ERR_ASSERTION',
-      constructor: assert.AssertionError,
-      message: 'The expression evaluated to a falsy value:\n\n  ' +
-               "assert(\n    (Buffer.from('test') instanceof Error)\n  )\n"
-    }
-  );
-  assert.throws(
-    () => throwErr(),
-    {
-      code: 'ERR_ASSERTION',
-      constructor: assert.AssertionError,
-      message: 'The expression evaluated to a falsy value:\n\n  ' +
-               "assert(\n    (Buffer.from('test') instanceof Error)\n  )\n"
-    }
-  );
-  fs.close = tmp;
-}
-
 assert.throws(
   () => {
     a(
       (() => 'string')()
-      // eslint-disable-next-line operator-linebreak
+      // eslint-disable-next-line @stylistic/js/operator-linebreak
       ===
       123 instanceof
           Buffer
@@ -794,7 +816,7 @@ assert.throws(
     message: 'The expression evaluated to a falsy value:\n\n' +
              '  a(\n' +
              '    (() => \'string\')()\n' +
-             '    // eslint-disable-next-line operator-linebreak\n' +
+             '    // eslint-disable-next-line @stylistic/js/operator-linebreak\n' +
              '    ===\n' +
              '    123 instanceof\n' +
              '        Buffer\n' +
@@ -806,7 +828,7 @@ assert.throws(
   () => {
     a(
       (() => 'string')()
-      // eslint-disable-next-line operator-linebreak
+      // eslint-disable-next-line @stylistic/js/operator-linebreak
       ===
   123 instanceof
           Buffer
@@ -818,7 +840,7 @@ assert.throws(
     message: 'The expression evaluated to a falsy value:\n\n' +
              '  a(\n' +
              '    (() => \'string\')()\n' +
-             '    // eslint-disable-next-line operator-linebreak\n' +
+             '    // eslint-disable-next-line @stylistic/js/operator-linebreak\n' +
              '    ===\n' +
              '  123 instanceof\n' +
              '        Buffer\n' +
@@ -826,7 +848,7 @@ assert.throws(
   }
 );
 
-/* eslint-disable indent */
+/* eslint-disable @stylistic/js/indent */
 assert.throws(() => {
 a((
   () => 'string')() ===
@@ -844,7 +866,7 @@ Buffer
            '  )\n'
   }
 );
-/* eslint-enable indent */
+/* eslint-enable @stylistic/js/indent */
 
 assert.throws(
   () => {
@@ -872,7 +894,7 @@ assert.throws(
 );
 
 assert.throws(
-  // eslint-disable-next-line dot-notation, quotes
+  // eslint-disable-next-line dot-notation, @stylistic/js/quotes
   () => assert['ok']["apply"](null, [0]),
   {
     code: 'ERR_ASSERTION',
@@ -921,7 +943,7 @@ assert.throws(
   {
     code: 'ERR_ASSERTION',
     constructor: assert.AssertionError,
-    message: 'The expression evaluated to a falsy value:\n\n  assert(1 === 2)\n'
+    message: 'false == true'
   }
 );
 assert.throws(
@@ -943,11 +965,8 @@ assert.throws(
   }
 );
 
-[
-  1,
-  false,
-  Symbol(),
-].forEach((input) => {
+const inputs = [1, false, Symbol()];
+for (const input of inputs) {
   assert.throws(
     () => assert.throws(() => {}, input),
     {
@@ -957,11 +976,12 @@ assert.throws(
                common.invalidArgTypeHelper(input)
     }
   );
-});
+}
 
 {
 
   assert.throws(() => {
+    // eslint-disable-next-line no-constant-binary-expression
     assert.ok((() => Boolean('' === false))());
   }, {
     message: 'The expression evaluated to a falsy value:\n\n' +

@@ -100,7 +100,7 @@ assert.strictEqual(
   `"${Array(75).fill(1)}'\\n" +\n  '\\x1D\\n' +\n  '\\x03\\x85\\x7F~\\x9F '`
 );
 assert.strictEqual(util.inspect([]), '[]');
-assert.strictEqual(util.inspect(Object.create([])), 'Array {}');
+assert.strictEqual(util.inspect({ __proto__: [] }), 'Array {}');
 assert.strictEqual(util.inspect([1, 2]), '[ 1, 2 ]');
 assert.strictEqual(util.inspect([1, [2, 3]]), '[ 1, [ 2, 3 ] ]');
 assert.strictEqual(util.inspect({}), '{}');
@@ -796,7 +796,7 @@ assert.strictEqual(util.inspect(-5e-324), '-5e-324');
 });
 
 // https://github.com/nodejs/node-v0.x-archive/issues/1941
-assert.strictEqual(util.inspect(Object.create(Date.prototype)), 'Date {}');
+assert.strictEqual(util.inspect({ __proto__: Date.prototype }), 'Date {}');
 
 // https://github.com/nodejs/node-v0.x-archive/issues/1944
 {
@@ -1462,12 +1462,12 @@ if (typeof Symbol !== 'undefined') {
 }
 
 {
-  const x = new function() {}; // eslint-disable-line new-parens
+  const x = new function() {}; // eslint-disable-line @stylistic/js/new-parens
   assert.strictEqual(util.inspect(x), '{}');
 }
 
 {
-  const x = Object.create(null);
+  const x = { __proto__: null };
   assert.strictEqual(util.inspect(x), '[Object: null prototype] {}');
 }
 
@@ -1631,7 +1631,7 @@ util.inspect(process);
     "Foo [bar] { foo: 'bar' }");
 
   assert.strictEqual(
-    util.inspect(Object.create(Object.create(Foo.prototype), {
+    util.inspect(Object.create({ __proto__: Foo.prototype }, {
       foo: { value: 'bar', enumerable: true }
     })),
     "Foo [bar] { foo: 'bar' }");
@@ -2056,7 +2056,7 @@ assert.strictEqual(util.inspect('"\'${a}'), "'\"\\'${a}'");
 
 // Verify that classes are properly inspected.
 [
-  /* eslint-disable spaced-comment, no-multi-spaces, brace-style */
+  /* eslint-disable @stylistic/js/spaced-comment, @stylistic/js/no-multi-spaces, @stylistic/js/brace-style */
   // The whitespace is intentional.
   [class   { }, '[class (anonymous)]'],
   [class extends Error { log() {} }, '[class (anonymous) extends Error]'],
@@ -2064,14 +2064,14 @@ assert.strictEqual(util.inspect('"\'${a}'), "'\"\\'${a}'");
    '[class A]'],
   [class
   // Random { // comments /* */ are part of the toString() result
-  /* eslint-disable-next-line space-before-blocks */
+  /* eslint-disable-next-line @stylistic/js/space-before-blocks */
   äß/**/extends/*{*/TypeError{}, '[class äß extends TypeError]'],
   /* The whitespace and new line is intended! */
   // Foobar !!!
   [class X   extends /****/ Error
   // More comments
   {}, '[class X extends Error]'],
-  /* eslint-enable spaced-comment, no-multi-spaces, brace-style */
+  /* eslint-enable @stylistic/js/spaced-comment, @stylistic/js/no-multi-spaces, @stylistic/js/brace-style */
 ].forEach(([clazz, string]) => {
   const inspected = util.inspect(clazz);
   assert.strictEqual(inspected, string);
@@ -2111,7 +2111,7 @@ assert.strictEqual(util.inspect('"\'${a}'), "'\"\\'${a}'");
 
 // "class" properties should not be detected as "class".
 {
-  // eslint-disable-next-line space-before-function-paren
+  // eslint-disable-next-line @stylistic/js/space-before-function-paren
   let obj = { class () {} };
   assert.strictEqual(
     util.inspect(obj),
@@ -2396,7 +2396,7 @@ assert.strictEqual(
   );
 
   function StorageObject() {}
-  StorageObject.prototype = Object.create(null);
+  StorageObject.prototype = { __proto__: null };
   assert.strictEqual(
     util.inspect(new StorageObject()),
     'StorageObject <[Object: null prototype] {}> {}'
@@ -2406,17 +2406,17 @@ assert.strictEqual(
   Object.setPrototypeOf(obj, Number.prototype);
   assert.strictEqual(inspect(obj), "Number { '0': 1, '1': 2, '2': 3 }");
 
-  Object.setPrototypeOf(obj, Object.create(null));
+  Object.setPrototypeOf(obj, { __proto__: null });
   assert.strictEqual(
     inspect(obj),
     "Array <[Object: null prototype] {}> { '0': 1, '1': 2, '2': 3 }"
   );
 
-  StorageObject.prototype = Object.create(null);
-  Object.setPrototypeOf(StorageObject.prototype, Object.create(null));
+  StorageObject.prototype = { __proto__: null };
+  Object.setPrototypeOf(StorageObject.prototype, { __proto__: null });
   Object.setPrototypeOf(
     Object.getPrototypeOf(StorageObject.prototype),
-    Object.create(null)
+    { __proto__: null }
   );
   assert.strictEqual(
     util.inspect(new StorageObject()),
@@ -2832,7 +2832,7 @@ assert.strictEqual(
     '    at Function.Module._load (node:internal/modules/cjs/loader:621:3)',
     // This file is not an actual Node.js core file.
     '    at Module.require [as weird/name] (node:internal/aaaaa/loader:735:19)',
-    '    at require (node:internal/modules/cjs/helpers:14:16)',
+    '    at require (node:internal/modules/helpers:14:16)',
     '    at Array.forEach (<anonymous>)',
     `    at ${process.cwd()}/test/parallel/test-util-inspect.js:2760:12`,
     `    at Object.<anonymous> (${process.cwd()}/node_modules/hyper_module/folder/file.js:2753:10)`,
@@ -2920,7 +2920,7 @@ assert.strictEqual(
   try {
     const trace = require('trace_events').createTracing({ categories: ['fo'] });
     const actualDepth0 = util.inspect({ trace }, { depth: 0 });
-    assert.strictEqual(actualDepth0, '{ trace: [Tracing] }');
+    assert.strictEqual(actualDepth0, '{ trace: Tracing {} }');
     const actualDepth1 = util.inspect({ trace }, { depth: 1 });
     assert.strictEqual(
       actualDepth1,
@@ -2991,7 +2991,7 @@ assert.strictEqual(
     '}'
   );
 
-  const obj = Object.create({ abc: true, def: 5, toString() {} });
+  const obj = { __proto__: { abc: true, def: 5, toString() {} } };
   assert.strictEqual(
     inspect(obj, { showHidden: true, colors: true }),
     '{ \x1B[2mabc: \x1B[33mtrue\x1B[39m\x1B[22m, ' +
@@ -3107,7 +3107,7 @@ assert.strictEqual(
         return this.stylized;
       }
     })
-  `, Object.create(null));
+  `, { __proto__: null });
   assert.strictEqual(target.ctx, undefined);
 
   {
@@ -3215,7 +3215,7 @@ assert.strictEqual(
     '[GeneratorFunction: generator] {\n' +
     '  [length]: 0,\n' +
     "  [name]: 'generator',\n" +
-    "  [prototype]: Object [Generator] { [Symbol(Symbol.toStringTag)]: 'Generator' },\n" + // eslint-disable-line max-len
+    "  [prototype]: Object [Generator] { [Symbol(Symbol.toStringTag)]: 'Generator' },\n" + // eslint-disable-line @stylistic/js/max-len
     "  [Symbol(Symbol.toStringTag)]: 'GeneratorFunction'\n" +
     '}'
   );

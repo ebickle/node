@@ -18,6 +18,7 @@
 #include "src/heap/cppgc/object-start-bitmap.h"
 #include "src/heap/cppgc/page-memory.h"
 #include "src/heap/cppgc/raw-heap.h"
+#include "src/heap/cppgc/remembered-set.h"
 #include "src/heap/cppgc/stats-collector.h"
 
 namespace cppgc {
@@ -52,7 +53,8 @@ const BasePage* BasePage::FromInnerAddress(const HeapBase* heap,
 }
 
 // static
-void BasePage::Destroy(BasePage* page) {
+void BasePage::Destroy(BasePage* page,
+                       FreeMemoryHandling free_memory_handling) {
   if (page->discarded_memory()) {
     page->space()
         .raw_heap()
@@ -63,7 +65,7 @@ void BasePage::Destroy(BasePage* page) {
   if (page->is_large()) {
     LargePage::Destroy(LargePage::From(page));
   } else {
-    NormalPage::Destroy(NormalPage::From(page));
+    NormalPage::Destroy(NormalPage::From(page), free_memory_handling);
   }
 }
 
@@ -83,6 +85,13 @@ Address BasePage::PayloadEnd() {
 
 ConstAddress BasePage::PayloadEnd() const {
   return const_cast<BasePage*>(this)->PayloadEnd();
+}
+
+size_t BasePage::AllocatedSize() const {
+  return is_large() ? LargePage::PageHeaderSize() +
+                          LargePage::From(this)->PayloadSize()
+                    : NormalPage::From(this)->PayloadSize() +
+                          RoundUp(sizeof(NormalPage), kAllocationGranularity);
 }
 
 size_t BasePage::AllocatedBytesAtLastGC() const {
@@ -120,8 +129,32 @@ const HeapObjectHeader* BasePage::TryObjectHeaderFromInnerAddress(
   return header;
 }
 
+#if defined(CPPGC_YOUNG_GENERATION)
+void BasePage::AllocateSlotSet() {
+  DCHECK_NULL(slot_set_);
+  slot_set_ = decltype(slot_set_)(
+      static_cast<SlotSet*>(
+          SlotSet::Allocate(SlotSet::BucketsForSize(AllocatedSize()))),
+      SlotSetDeleter{AllocatedSize()});
+}
+
+void BasePage::SlotSetDeleter::operator()(SlotSet* slot_set) const {
+  DCHECK_NOT_NULL(slot_set);
+  SlotSet::Delete(slot_set, SlotSet::BucketsForSize(page_size_));
+}
+
+void BasePage::ResetSlotSet() { slot_set_.reset(); }
+#endif  // defined(CPPGC_YOUNG_GENERATION)
+
 BasePage::BasePage(HeapBase& heap, BaseSpace& space, PageType type)
-    : BasePageHandle(heap), space_(space), type_(type) {
+    : BasePageHandle(heap),
+      space_(space),
+      type_(type)
+#if defined(CPPGC_YOUNG_GENERATION)
+      ,
+      slot_set_(nullptr, SlotSetDeleter{})
+#endif  // defined(CPPGC_YOUNG_GENERATION)
+{
   DCHECK_EQ(0u, (reinterpret_cast<uintptr_t>(this) - kGuardPageSize) &
                     kPageOffsetMask);
   DCHECK_EQ(&heap.raw_heap(), space_.raw_heap());
@@ -159,19 +192,21 @@ NormalPage* NormalPage::TryCreate(PageBackend& page_backend,
 }
 
 // static
-void NormalPage::Destroy(NormalPage* page) {
+void NormalPage::Destroy(NormalPage* page,
+                         FreeMemoryHandling free_memory_handling) {
   DCHECK(page);
   const BaseSpace& space = page->space();
   DCHECK_EQ(space.end(), std::find(space.begin(), space.end(), page));
+  USE(space);
   page->~NormalPage();
   PageBackend* backend = page->heap().page_backend();
   page->heap().stats_collector()->NotifyFreedMemory(kPageSize);
-  backend->FreeNormalPageMemory(space.index(), reinterpret_cast<Address>(page));
+  backend->FreeNormalPageMemory(reinterpret_cast<Address>(page),
+                                free_memory_handling);
 }
 
 NormalPage::NormalPage(HeapBase& heap, BaseSpace& space)
-    : BasePage(heap, space, PageType::kNormal),
-      object_start_bitmap_(PayloadStart()) {
+    : BasePage(heap, space, PageType::kNormal), object_start_bitmap_() {
   DCHECK_LT(kLargeObjectSizeThreshold,
             static_cast<size_t>(PayloadEnd() - PayloadStart()));
 }

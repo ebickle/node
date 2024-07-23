@@ -19,10 +19,10 @@ For a list of available configuration options, see
 
 The four relevant files are:
 
-* per-project config file (/path/to/my/project/.npmrc)
-* per-user config file (~/.npmrc)
-* global config file ($PREFIX/etc/npmrc)
-* npm builtin config file (/path/to/npm/npmrc)
+* per-project config file (`/path/to/my/project/.npmrc`)
+* per-user config file (`~/.npmrc`)
+* global config file (`$PREFIX/etc/npmrc`)
+* npm builtin config file (`/path/to/npm/npmrc`)
 
 All npm config files are an ini-formatted list of `key = value` parameters.
 Environment variables can be replaced using `${VARIABLE_NAME}`. For
@@ -96,6 +96,15 @@ to override default configs in a standard and consistent manner.
 The settings `_auth`, `_authToken`, `username` and `_password` must all be
 scoped to a specific registry. This ensures that `npm` will never send
 credentials to the wrong host.
+
+The full list is:
+ - `_auth` (base64 authentication string)
+ - `_authToken` (authentication token)
+ - `username`
+ - `_password`
+ - `email`
+ - `certfile` (path to certificate file)
+ - `keyfile` (path to key file)
 
 In order to scope these values, they must be prefixed by a URI fragment.
 If the credential is meant for any request to a registry on a single host,

@@ -1,22 +1,26 @@
 {
   "common": {
-    "commit": "03c5072affa496c5fd2a506e5c40d23e36b5e3aa",
+    "commit": "dbd648158d337580885e70a54f929daf215211a0",
     "path": "common"
+  },
+  "compression": {
+    "commit": "5aa50dd4151b5bc1d04d5505366c6e27df30af5b",
+    "path": "compression"
   },
   "console": {
     "commit": "767ae354642bee1e4d90b28df4480475b9260e14",
     "path": "console"
   },
   "dom/abort": {
-    "commit": "c49cafb491d99d6318f8f24a26936cc66501f412",
+    "commit": "d1f1ecbd52f2eab3b7fe5dc1b20b41174f1341ce",
     "path": "dom/abort"
   },
   "dom/events": {
-    "commit": "f8821adb281696322f4bd96d412a98ae510f9125",
+    "commit": "ab8999891c6225bef1741c2960033aad620481a8",
     "path": "dom/events"
   },
   "encoding": {
-    "commit": "c1b24fce6e625c1b79124a58f27bf9adce02d5d7",
+    "commit": "5aa50dd4151b5bc1d04d5505366c6e27df30af5b",
     "path": "encoding"
   },
   "fetch/data-urls/resources": {
@@ -24,7 +28,7 @@
     "path": "fetch/data-urls/resources"
   },
   "FileAPI": {
-    "commit": "3b279420d40afea32506e823f9ac005448f4f3d8",
+    "commit": "cceaf3628da950621004d9b5d8c1d1f367073347",
     "path": "FileAPI"
   },
   "hr-time": {
@@ -48,7 +52,7 @@
     "path": "html/webappapis/timers"
   },
   "interfaces": {
-    "commit": "df731dab88a1a25c04eb7e6238c11dc28fda0801",
+    "commit": "e90ece61d6e7ff84a0dc9c496588690e6a61cb17",
     "path": "interfaces"
   },
   "performance-timeline": {
@@ -60,23 +64,23 @@
     "path": "resource-timing"
   },
   "resources": {
-    "commit": "fbf1e7d24776b6da144dbca45c22d39dc0512d2d",
+    "commit": "1e140d63ec885703ce24b3798abd81912696bb85",
     "path": "resources"
   },
   "streams": {
-    "commit": "9e5ef42bd34b5b19b76d0d4cb19012e52c222664",
+    "commit": "9b03282a99ef2314c1c2d5050a105a74a2940019",
     "path": "streams"
   },
   "url": {
-    "commit": "0e5b126cd0a8da9186b738b8c9278d19b594c51f",
+    "commit": "6a39784534e118acc102cf5252c542378831401d",
     "path": "url"
   },
   "user-timing": {
-    "commit": "df24fb604e2d40528ac1d1b5dd970e32fc5c2978",
+    "commit": "5ae85bf8267ac617833dc013dee9774c9e2a18b7",
     "path": "user-timing"
   },
   "wasm/jsapi": {
-    "commit": "d8dbe6990bed03ec03beee25069a9347d4c3d6d5",
+    "commit": "cde25e7e3c3b9d2280eb088a3fb9da988793d255",
     "path": "wasm/jsapi"
   },
   "wasm/webapi": {
@@ -84,11 +88,19 @@
     "path": "wasm/webapi"
   },
   "WebCryptoAPI": {
-    "commit": "edca84af42bd7e84da94e63b322fe343191842d2",
+    "commit": "5e042cbc4ecab7b2279a5fd411c6daa24ca886c6",
     "path": "WebCryptoAPI"
   },
   "webidl/ecmascript-binding/es-exceptions": {
     "commit": "a370aad338d6ed743abb4d2c6ae84a7f1058558c",
     "path": "webidl/ecmascript-binding/es-exceptions"
+  },
+  "webmessaging/broadcastchannel": {
+    "commit": "e97fac4791931fb7455ba3fad759d362c7108b09",
+    "path": "webmessaging/broadcastchannel"
+  },
+  "webstorage": {
+    "commit": "9dafa892146c4b5b1f604a39b3cf8677f8f70d44",
+    "path": "webstorage"
   }
 }

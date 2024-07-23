@@ -135,4 +135,11 @@
 #define ALIGNAS(byte_alignment) __attribute__((aligned(byte_alignment)))
 #endif
 
+// Forces the linker to not GC the section corresponding to the symbol.
+#if V8_HAS_ATTRIBUTE_USED && V8_HAS_ATTRIBUTE_RETAIN
+#define V8_DONT_STRIP_SYMBOL __attribute__((used, retain))
+#else
+#define V8_DONT_STRIP_SYMBOL
+#endif
+
 #endif  // V8_BASE_COMPILER_SPECIFIC_H_

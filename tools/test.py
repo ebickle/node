@@ -29,6 +29,7 @@
 
 
 from __future__ import print_function
+from typing import Dict
 import logging
 import optparse
 import os
@@ -43,7 +44,7 @@ import utils
 import multiprocessing
 import errno
 import copy
-
+import io
 
 if sys.version_info >= (3, 5):
   from importlib import machinery, util
@@ -67,7 +68,7 @@ else:
 
 from io import open
 from os.path import join, dirname, abspath, basename, isdir, exists
-from datetime import datetime
+from datetime import datetime, timedelta
 try:
     from queue import Queue, Empty  # Python 3
 except ImportError:
@@ -82,12 +83,12 @@ except ImportError:
 
 
 logger = logging.getLogger('testrunner')
-skip_regex = re.compile(r'# SKIP\S*\s+(.*)', re.IGNORECASE)
+skip_regex = re.compile(r'(?:\d+\.\.\d+|ok|not ok).*# SKIP\S*\s+(.*)', re.IGNORECASE)
 
 VERBOSE = False
 
 os.umask(0o022)
-os.environ['NODE_OPTIONS'] = ''
+os.environ.pop('NODE_OPTIONS', None)
 
 # ---------------------------------------------
 # --- P r o g r e s s   I n d i c a t o r s ---
@@ -147,7 +148,7 @@ class ProgressIndicator(object):
     })
     print("Path: %s" % "/".join(test.path))
 
-  def Run(self, tasks):
+  def Run(self, tasks) -> Dict:
     self.Starting()
     threads = []
     # Spawn N-1 threads and then use this thread as the last one.
@@ -172,7 +173,10 @@ class ProgressIndicator(object):
       # ...and then reraise the exception to bail out
       raise
     self.Done()
-    return not self.failed
+    return {
+      'allPassed': not self.failed,
+      'failed': self.failed,
+    }
 
   def RunSingle(self, parallel, thread_id):
     while not self.shutdown_event.is_set():
@@ -311,6 +315,11 @@ class DotsProgressIndicator(SimpleProgressIndicator):
       sys.stdout.flush()
 
 class ActionsAnnotationProgressIndicator(DotsProgressIndicator):
+  def AboutToRun(self, case):
+    case.additional_flags = case.additional_flags.copy() if hasattr(case, 'additional_flags') else []
+    case.additional_flags.append('--test-reporter=./tools/github_reporter/index.js')
+    case.additional_flags.append('--test-reporter-destination=stdout')
+
   def GetAnnotationInfo(self, test, output):
     traceback = output.stdout + output.stderr
     find_full_path = re.search(r' +at .*\(.*%s:([0-9]+):([0-9]+)' % test.file, traceback)
@@ -395,16 +404,8 @@ class TapProgressIndicator(SimpleProgressIndicator):
 
 
     duration = output.test.duration
-
-    # total_seconds() was added in 2.7
-    total_seconds = (duration.microseconds +
-      (duration.seconds + duration.days * 24 * 3600) * 10**6) / 10**6
-
-    # duration_ms is measured in seconds and is read as such by TAP parsers.
-    # It should read as "duration including ms" rather than "duration in ms"
     logger.info('  ---')
-    logger.info('  duration_ms: %d.%d' %
-      (total_seconds, duration.microseconds / 1000))
+    logger.info('  duration_ms: %.5f' % (duration  / timedelta(milliseconds=1)))
     if self.severity != 'ok' or self.traceback != '':
       if output.HasTimedOut():
         self.traceback = 'timeout\n' + output.output.stdout + output.output.stderr
@@ -479,6 +480,7 @@ class CompactProgressIndicator(ProgressIndicator):
         print("--- %s ---" % PrintCrashed(output.output.exit_code))
       if output.HasTimedOut():
         print("--- TIMEOUT ---")
+      print("\n") # Two blank lines between failures, for visual separation
 
   def Truncate(self, str, length):
     if length and (len(str) > (length - 3)):
@@ -569,6 +571,7 @@ class TestCase(object):
     self.mode = mode
     self.parallel = False
     self.disable_core_files = False
+    self.max_virtual_memory = None
     self.serial_id = 0
     self.thread_id = 0
 
@@ -592,7 +595,8 @@ class TestCase(object):
                      self.context,
                      self.context.GetTimeout(self.mode, self.config.section),
                      env,
-                     disable_core_files = self.disable_core_files)
+                     disable_core_files = self.disable_core_files,
+                     max_virtual_memory = self.max_virtual_memory)
     return TestOutput(self,
                       full_command,
                       output,
@@ -603,7 +607,8 @@ class TestCase(object):
       result = self.RunCommand(self.GetCommand(), {
         "TEST_SERIAL_ID": "%d" % self.serial_id,
         "TEST_THREAD_ID": "%d" % self.thread_id,
-        "TEST_PARALLEL" : "%d" % self.parallel
+        "TEST_PARALLEL" : "%d" % self.parallel,
+        "GITHUB_STEP_SUMMARY": "",
       })
     finally:
       # Tests can leave the tty in non-blocking mode. If the test runner
@@ -755,7 +760,8 @@ def CheckedUnlink(name):
       PrintError("os.unlink() " + str(e))
     break
 
-def Execute(args, context, timeout=None, env=None, disable_core_files=False, stdin=None):
+def Execute(args, context, timeout=None, env=None, disable_core_files=False,
+            stdin=None, max_virtual_memory=None):
   (fd_out, outname) = tempfile.mkstemp()
   (fd_err, errname) = tempfile.mkstemp()
 
@@ -777,11 +783,27 @@ def Execute(args, context, timeout=None, env=None, disable_core_files=False, std
 
   preexec_fn = None
 
+  def disableCoreFiles():
+    import resource
+    resource.setrlimit(resource.RLIMIT_CORE, (0,0))
+
   if disable_core_files and not utils.IsWindows():
-    def disableCoreFiles():
+    preexec_fn = disableCoreFiles
+
+  if max_virtual_memory is not None and utils.GuessOS() == 'linux':
+    def setMaxVirtualMemory():
       import resource
       resource.setrlimit(resource.RLIMIT_CORE, (0,0))
-    preexec_fn = disableCoreFiles
+      resource.setrlimit(resource.RLIMIT_AS, (max_virtual_memory,max_virtual_memory + 1))
+
+    if preexec_fn is not None:
+      prev_preexec_fn = preexec_fn
+      def setResourceLimits():
+        setMaxVirtualMemory()
+        prev_preexec_fn()
+      preexec_fn = setResourceLimits
+    else:
+      preexec_fn = setMaxVirtualMemory
 
   (process, exit_code, timed_out) = RunProcess(
     context,
@@ -909,10 +931,12 @@ class LiteralTestSuite(TestSuite):
 
 
 TIMEOUT_SCALEFACTOR = {
-    'arm'   : { 'debug' :  8, 'release' : 3 }, # The ARM buildbots are slow.
-    'ia32'  : { 'debug' :  4, 'release' : 1 },
-    'ppc'   : { 'debug' :  4, 'release' : 1 },
-    's390'  : { 'debug' :  4, 'release' : 1 } }
+    'arm'       : { 'debug' :  8, 'release' : 3 }, # The ARM buildbots are slow.
+    'riscv64'   : { 'debug' :  8, 'release' : 3 }, # The riscv devices are slow.
+    'loong64'   : { 'debug' :  4, 'release' : 1 },
+    'ia32'      : { 'debug' :  4, 'release' : 1 },
+    'ppc'       : { 'debug' :  4, 'release' : 1 },
+    's390'      : { 'debug' :  4, 'release' : 1 } }
 
 
 class Context(object):
@@ -1035,6 +1059,9 @@ class Operation(Expression):
       return self.left.Evaluate(env, defs) or self.right.Evaluate(env, defs)
     elif self.op == 'if':
       return False
+    elif self.op == '!=':
+      inter = self.left.GetOutcomes(env, defs) != self.right.GetOutcomes(env, defs)
+      return bool(inter)
     elif self.op == '==':
       inter = self.left.GetOutcomes(env, defs) & self.right.GetOutcomes(env, defs)
       return bool(inter)
@@ -1122,6 +1149,9 @@ class Tokenizer(object):
       elif self.Current(2) == '==':
         self.AddToken('==')
         self.Advance(2)
+      elif self.Current(2) == '!=':
+        self.AddToken('!=')
+        self.Advance(2)
       else:
         return None
     return self.tokens
@@ -1174,7 +1204,7 @@ def ParseAtomicExpression(scan):
     return None
 
 
-BINARIES = ['==']
+BINARIES = ['==', '!=']
 def ParseOperatorExpression(scan):
   left = ParseAtomicExpression(scan)
   if not left: return None
@@ -1582,6 +1612,11 @@ def get_env_type(vm, options_type, context):
   return env_type
 
 
+def get_asan_state(vm, context):
+  asan = Execute([vm, '-p', 'process.config.variables.asan'], context).stdout.strip()
+  return "on" if asan == "1" else "off"
+
+
 def Main():
   parser = BuildOptions()
   (options, args) = parser.parse_args()
@@ -1589,7 +1624,13 @@ def Main():
     parser.print_help()
     return 1
 
-  ch = logging.StreamHandler(sys.stdout)
+  stream = sys.stdout
+  try:
+    sys.stdout.reconfigure(encoding='utf8')
+  except AttributeError:
+    # Python < 3.7 does not have reconfigure
+    stream = io.TextIOWrapper(sys.stdout.buffer,encoding='utf8')
+  ch = logging.StreamHandler(stream)
   logger.addHandler(ch)
   logger.setLevel(logging.INFO)
   if options.logfile:
@@ -1668,6 +1709,7 @@ def Main():
           'system': utils.GuessOS(),
           'arch': vmArch,
           'type': get_env_type(vm, options.type, context),
+          'asan': get_asan_state(vm, context),
         }
         test_list = root.ListTests([], path, context, arch, mode)
         unclassified_tests += test_list
@@ -1756,10 +1798,8 @@ def Main():
   else:
     try:
       start = time.time()
-      if RunTestCases(cases_to_run, options.progress, options.j, options.flaky_tests, options.measure_flakiness):
-        result = 0
-      else:
-        result = 1
+      result = RunTestCases(cases_to_run, options.progress, options.j, options.flaky_tests, options.measure_flakiness)
+      exitcode = 0 if result['allPassed'] else 1
       duration = time.time() - start
     except KeyboardInterrupt:
       print("Interrupted")
@@ -1776,7 +1816,14 @@ def Main():
       t = FormatTimedelta(entry.duration)
       sys.stderr.write("%4i (%s) %s\n" % (i, t, entry.GetLabel()))
 
-  return result
+  if result['allPassed']:
+    print("\nAll tests passed.")
+  else:
+    print("\nFailed tests:")
+    for failure in result['failed']:
+      print(EscapeCommand(failure.command))
+
+  return exitcode
 
 
 if __name__ == '__main__':

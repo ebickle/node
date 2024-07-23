@@ -46,7 +46,7 @@ class StringBuilder {
     return result;
   }
   // Convenience wrappers.
-  void write(const byte* data, size_t n) {
+  void write(const uint8_t* data, size_t n) {
     char* ptr = allocate(n);
     memcpy(ptr, data, n);
   }
@@ -63,12 +63,25 @@ class StringBuilder {
     cursor_ = start_;
   }
 
+  // Erases the last character that was written. Calling this repeatedly
+  // isn't safe due to internal chunking of the backing store.
+  void backspace() {
+    DCHECK_GT(cursor_, start_);
+    cursor_--;
+    remaining_bytes_++;
+  }
+
  protected:
   enum OnGrowth : bool { kKeepOldChunks, kReplacePreviousChunk };
 
   // Useful for subclasses that divide the text into ranges, e.g. lines.
   explicit StringBuilder(OnGrowth on_growth) : on_growth_(on_growth) {}
   void start_here() { start_ = cursor_; }
+
+  size_t approximate_size_mb() {
+    static_assert(kChunkSize == size_t{MB});
+    return chunks_.size();
+  }
 
  private:
   void Grow(size_t requested) {

@@ -104,15 +104,22 @@ Maybe<bool> ScryptTraits::AdditionalConfig(
           params->maxmem,
           nullptr,
           0) != 1) {
-    THROW_ERR_CRYPTO_INVALID_SCRYPT_PARAMS(env);
+    // Do not use CryptoErrorStore or ThrowCryptoError here in order to maintain
+    // backward compatibility with ERR_CRYPTO_INVALID_SCRYPT_PARAMS.
+    uint32_t err = ERR_peek_last_error();
+    if (err != 0) {
+      char buf[256];
+      ERR_error_string_n(err, buf, sizeof(buf));
+      THROW_ERR_CRYPTO_INVALID_SCRYPT_PARAMS(
+          env, "Invalid scrypt params: %s", buf);
+    } else {
+      THROW_ERR_CRYPTO_INVALID_SCRYPT_PARAMS(env);
+    }
     return Nothing<bool>();
   }
 
   params->length = args[offset + 6].As<Int32>()->Value();
-  if (params->length < 0) {
-    THROW_ERR_OUT_OF_RANGE(env, "length must be <= %d", INT_MAX);
-    return Nothing<bool>();
-  }
+  CHECK_GE(params->length, 0);
 
   return Just(true);
 }

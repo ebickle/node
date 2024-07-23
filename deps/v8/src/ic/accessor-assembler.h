@@ -8,6 +8,7 @@
 #include "src/base/optional.h"
 #include "src/codegen/code-stub-assembler.h"
 #include "src/compiler/code-assembler.h"
+#include "src/objects/dictionary.h"
 
 namespace v8 {
 namespace internal {
@@ -34,13 +35,17 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
   void GenerateLoadSuperIC();
   void GenerateLoadSuperICBaseline();
   void GenerateKeyedLoadIC();
+  void GenerateEnumeratedKeyedLoadIC();
   void GenerateKeyedLoadIC_Megamorphic();
   void GenerateKeyedLoadIC_PolymorphicName();
   void GenerateKeyedLoadICTrampoline();
   void GenerateKeyedLoadICBaseline();
+  void GenerateEnumeratedKeyedLoadICBaseline();
   void GenerateKeyedLoadICTrampoline_Megamorphic();
   void GenerateStoreIC();
+  void GenerateStoreIC_Megamorphic();
   void GenerateStoreICTrampoline();
+  void GenerateStoreICTrampoline_Megamorphic();
   void GenerateStoreICBaseline();
   void GenerateDefineNamedOwnIC();
   void GenerateDefineNamedOwnICTrampoline();
@@ -59,6 +64,7 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
   void GenerateLoadGlobalIC(TypeofMode typeof_mode);
   void GenerateLoadGlobalICTrampoline(TypeofMode typeof_mode);
   void GenerateLoadGlobalICBaseline(TypeofMode typeof_mode);
+  void GenerateLookupGlobalIC(TypeofMode typeof_mode);
   void GenerateLookupGlobalICTrampoline(TypeofMode typeof_mode);
   void GenerateLookupGlobalICBaseline(TypeofMode typeof_mode);
   void GenerateLookupContextTrampoline(TypeofMode typeof_mode);
@@ -66,6 +72,7 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
 
   void GenerateKeyedStoreIC();
   void GenerateKeyedStoreICTrampoline();
+  void GenerateKeyedStoreICTrampoline_Megamorphic();
   void GenerateKeyedStoreICBaseline();
 
   void GenerateDefineKeyedOwnIC();
@@ -76,9 +83,18 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
   void GenerateStoreInArrayLiteralICBaseline();
 
   void TryProbeStubCache(StubCache* stub_cache,
-                         TNode<Object> lookup_start_object, TNode<Name> name,
+                         TNode<Object> lookup_start_object,
+                         TNode<Map> lookup_start_object_map, TNode<Name> name,
                          Label* if_handler, TVariable<MaybeObject>* var_handler,
                          Label* if_miss);
+  void TryProbeStubCache(StubCache* stub_cache,
+                         TNode<Object> lookup_start_object, TNode<Name> name,
+                         Label* if_handler, TVariable<MaybeObject>* var_handler,
+                         Label* if_miss) {
+    return TryProbeStubCache(stub_cache, lookup_start_object,
+                             LoadReceiverMap(lookup_start_object), name,
+                             if_handler, var_handler, if_miss);
+  }
 
   TNode<IntPtrT> StubCachePrimaryOffsetForTesting(TNode<Name> name,
                                                   TNode<Map> map) {
@@ -93,14 +109,18 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
     LoadICParameters(
         TNode<Context> context, TNode<Object> receiver, TNode<Object> name,
         TNode<TaggedIndex> slot, TNode<HeapObject> vector,
-        base::Optional<TNode<Object>> lookup_start_object = base::nullopt)
+        base::Optional<TNode<Object>> lookup_start_object = base::nullopt,
+        base::Optional<TNode<TaggedIndex>> enum_index = base::nullopt,
+        base::Optional<TNode<Object>> cache_type = base::nullopt)
         : context_(context),
           receiver_(receiver),
           name_(name),
           slot_(slot),
           vector_(vector),
           lookup_start_object_(lookup_start_object ? lookup_start_object.value()
-                                                   : receiver) {}
+                                                   : receiver),
+          enum_index_(enum_index),
+          cache_type_(cache_type) {}
 
     LoadICParameters(const LoadICParameters* p, TNode<Object> unique_name)
         : context_(p->context_),
@@ -118,6 +138,8 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
     TNode<Object> lookup_start_object() const {
       return lookup_start_object_.value();
     }
+    TNode<TaggedIndex> enum_index() const { return *enum_index_; }
+    TNode<Object> cache_type() const { return *cache_type_; }
 
     // Usable in cases where the receiver and the lookup start object are
     // expected to be the same, i.e., when "receiver != lookup_start_object"
@@ -127,6 +149,8 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
       return receiver_;
     }
 
+    bool IsEnumeratedKeyedLoad() const { return enum_index_ != base::nullopt; }
+
    private:
     TNode<Context> context_;
     TNode<Object> receiver_;
@@ -134,6 +158,8 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
     TNode<TaggedIndex> slot_;
     TNode<HeapObject> vector_;
     base::Optional<TNode<Object>> lookup_start_object_;
+    base::Optional<TNode<TaggedIndex>> enum_index_;
+    base::Optional<TNode<Object>> cache_type_;
   };
 
   struct LazyLoadICParameters {
@@ -209,12 +235,13 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
     StoreICParameters(TNode<Context> context,
                       base::Optional<TNode<Object>> receiver,
                       TNode<Object> name, TNode<Object> value,
-                      TNode<TaggedIndex> slot, TNode<HeapObject> vector,
-                      StoreICMode mode)
+                      base::Optional<TNode<Smi>> flags, TNode<TaggedIndex> slot,
+                      TNode<HeapObject> vector, StoreICMode mode)
         : context_(context),
           receiver_(receiver),
           name_(name),
           value_(value),
+          flags_(flags),
           slot_(slot),
           vector_(vector),
           mode_(mode) {}
@@ -223,12 +250,14 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
     TNode<Object> receiver() const { return receiver_.value(); }
     TNode<Object> name() const { return name_; }
     TNode<Object> value() const { return value_; }
+    TNode<Smi> flags() const { return flags_.value(); }
     TNode<TaggedIndex> slot() const { return slot_; }
     TNode<HeapObject> vector() const { return vector_; }
 
     TNode<Object> lookup_start_object() const { return receiver(); }
 
     bool receiver_is_null() const { return !receiver_.has_value(); }
+    bool flags_is_null() const { return !flags_.has_value(); }
 
     bool IsDefineNamedOwn() const {
       return mode_ == StoreICMode::kDefineNamedOwn;
@@ -240,11 +269,17 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
       return IsDefineNamedOwn() || IsDefineKeyedOwn();
     }
 
+    StubCache* stub_cache(Isolate* isolate) const {
+      return IsAnyDefineOwn() ? isolate->define_own_stub_cache()
+                              : isolate->store_stub_cache();
+    }
+
    private:
     TNode<Context> context_;
     base::Optional<TNode<Object>> receiver_;
     TNode<Object> name_;
     TNode<Object> value_;
+    base::Optional<TNode<Smi>> flags_;
     TNode<TaggedIndex> slot_;
     TNode<HeapObject> vector_;
     StoreICMode mode_;
@@ -267,6 +302,10 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
                                              TNode<Map> transition_map,
                                              Label* miss,
                                              StoreTransitionMapFlags flags);
+
+  // Updates flags on |dict| if |name| is an interesting property.
+  void UpdateMayHaveInterestingProperty(TNode<PropertyDictionary> dict,
+                                        TNode<Name> name);
 
   void JumpIfDataProperty(TNode<Uint32T> details, Label* writable,
                           Label* readonly);
@@ -343,23 +382,30 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
                      LazyNode<TaggedIndex> lazy_slot, TNode<Context> context,
                      TypeofMode typeof_mode);
 
+  void GotoIfNotSameNumberBitPattern(TNode<Float64T> left,
+                                     TNode<Float64T> right, Label* miss);
+
   // IC dispatcher behavior.
 
   // Checks monomorphic case. Returns {feedback} entry of the vector.
   TNode<HeapObjectReference> TryMonomorphicCase(
       TNode<TaggedIndex> slot, TNode<FeedbackVector> vector,
-      TNode<Map> lookup_start_object_map, Label* if_handler,
+      TNode<HeapObjectReference> weak_lookup_start_object_map,
+      Label* if_handler, TVariable<MaybeObject>* var_handler, Label* if_miss);
+  void HandlePolymorphicCase(
+      TNode<HeapObjectReference> weak_lookup_start_object_map,
+      TNode<WeakFixedArray> feedback, Label* if_handler,
       TVariable<MaybeObject>* var_handler, Label* if_miss);
-  void HandlePolymorphicCase(TNode<Map> lookup_start_object_map,
-                             TNode<WeakFixedArray> feedback, Label* if_handler,
-                             TVariable<MaybeObject>* var_handler,
-                             Label* if_miss);
 
   void TryMegaDOMCase(TNode<Object> lookup_start_object,
                       TNode<Map> lookup_start_object_map,
                       TVariable<MaybeObject>* var_handler, TNode<Object> vector,
                       TNode<TaggedIndex> slot, Label* miss,
                       ExitPoint* exit_point);
+
+  void TryEnumeratedKeyedLoad(const LoadICParameters* p,
+                              TNode<Map> lookup_start_object_map,
+                              ExitPoint* exit_point);
 
   // LoadIC implementation.
   void HandleLoadICHandlerCase(
@@ -391,7 +437,7 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
                                   ExitPoint* exit_point);
 
   void HandleLoadAccessor(const LazyLoadICParameters* p,
-                          TNode<CallHandlerInfo> call_handler_info,
+                          TNode<FunctionTemplateInfo> function_template_info,
                           TNode<Word32T> handler_word,
                           TNode<DataHandler> handler,
                           TNode<Uint32T> handler_kind, ExitPoint* exit_point);
@@ -454,8 +500,8 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
   // StoreIC implementation.
 
   void HandleStoreICProtoHandler(const StoreICParameters* p,
-                                 TNode<StoreHandler> handler, Label* miss,
-                                 ICMode ic_mode,
+                                 TNode<StoreHandler> handler, Label* slow,
+                                 Label* miss, ICMode ic_mode,
                                  ElementSupport support_elements);
   void HandleStoreICSmiHandlerCase(TNode<Word32T> handler_word,
                                    TNode<JSObject> holder, TNode<Object> value,
@@ -496,7 +542,7 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
 
   // Low-level helpers.
 
-  using OnCodeHandler = std::function<void(TNode<CodeT> code_handler)>;
+  using OnCodeHandler = std::function<void(TNode<Code> code_handler)>;
   using OnFoundOnLookupStartObject = std::function<void(
       TNode<PropertyDictionary> properties, TNode<IntPtrT> name_index)>;
 
@@ -592,18 +638,18 @@ class ExitPoint {
   }
 
   template <class... TArgs>
-  void ReturnCallStub(Callable const& callable, TNode<Context> context,
-                      TArgs... args) {
+  void ReturnCallBuiltin(Builtin builtin, TNode<Context> context,
+                         TArgs... args) {
     if (IsDirect()) {
-      asm_->TailCallStub(callable, context, args...);
+      asm_->TailCallBuiltin(builtin, context, args...);
     } else {
-      indirect_return_handler_(asm_->CallStub(callable, context, args...));
+      indirect_return_handler_(asm_->CallBuiltin(builtin, context, args...));
     }
   }
 
   template <class... TArgs>
   void ReturnCallStub(const CallInterfaceDescriptor& descriptor,
-                      TNode<CodeT> target, TNode<Context> context,
+                      TNode<Code> target, TNode<Context> context,
                       TArgs... args) {
     if (IsDirect()) {
       asm_->TailCallStub(descriptor, target, context, args...);

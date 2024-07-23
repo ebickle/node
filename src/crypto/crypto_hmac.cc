@@ -13,6 +13,7 @@
 
 namespace node {
 
+using v8::Boolean;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
@@ -41,9 +42,7 @@ void Hmac::Initialize(Environment* env, Local<Object> target) {
   Isolate* isolate = env->isolate();
   Local<FunctionTemplate> t = NewFunctionTemplate(isolate, New);
 
-  t->InstanceTemplate()->SetInternalFieldCount(
-      Hmac::kInternalFieldCount);
-  t->Inherit(BaseObject::GetConstructorTemplate(env));
+  t->InstanceTemplate()->SetInternalFieldCount(Hmac::kInternalFieldCount);
 
   SetProtoMethod(isolate, t, "init", HmacInit);
   SetProtoMethod(isolate, t, "update", HmacUpdate);
@@ -86,7 +85,7 @@ void Hmac::HmacInit(const char* hash_type, const char* key, int key_len) {
 
 void Hmac::HmacInit(const FunctionCallbackInfo<Value>& args) {
   Hmac* hmac;
-  ASSIGN_OR_RETURN_UNWRAP(&hmac, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&hmac, args.This());
   Environment* env = hmac->env();
 
   const node::Utf8Value hash_type(env->isolate(), args[0]);
@@ -115,7 +114,7 @@ void Hmac::HmacDigest(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
   Hmac* hmac;
-  ASSIGN_OR_RETURN_UNWRAP(&hmac, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&hmac, args.This());
 
   enum encoding encoding = BUFFER;
   if (args.Length() >= 1) {
@@ -266,11 +265,10 @@ Maybe<bool> HmacTraits::EncodeOutput(
       *result = out->ToArrayBuffer(env);
       break;
     case SignConfiguration::kVerify:
-      *result =
+      *result = Boolean::New(
+          env->isolate(),
           out->size() > 0 && out->size() == params.signature.size() &&
-                  memcmp(out->data(), params.signature.data(), out->size()) == 0
-              ? v8::True(env->isolate())
-              : v8::False(env->isolate());
+              memcmp(out->data(), params.signature.data(), out->size()) == 0);
       break;
     default:
       UNREACHABLE();

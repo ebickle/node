@@ -284,26 +284,26 @@ void StreamPipe::New(const FunctionCallbackInfo<Value>& args) {
 
 void StreamPipe::Start(const FunctionCallbackInfo<Value>& args) {
   StreamPipe* pipe;
-  ASSIGN_OR_RETURN_UNWRAP(&pipe, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&pipe, args.This());
   pipe->is_closed_ = false;
   pipe->writable_listener_.OnStreamWantsWrite(65536);
 }
 
 void StreamPipe::Unpipe(const FunctionCallbackInfo<Value>& args) {
   StreamPipe* pipe;
-  ASSIGN_OR_RETURN_UNWRAP(&pipe, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&pipe, args.This());
   pipe->Unpipe();
 }
 
 void StreamPipe::IsClosed(const FunctionCallbackInfo<Value>& args) {
   StreamPipe* pipe;
-  ASSIGN_OR_RETURN_UNWRAP(&pipe, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&pipe, args.This());
   args.GetReturnValue().Set(pipe->is_closed_);
 }
 
 void StreamPipe::PendingWrites(const FunctionCallbackInfo<Value>& args) {
   StreamPipe* pipe;
-  ASSIGN_OR_RETURN_UNWRAP(&pipe, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&pipe, args.This());
   args.GetReturnValue().Set(pipe->pending_writes_);
 }
 
@@ -332,5 +332,4 @@ void InitializeStreamPipe(Local<Object> target,
 
 }  // namespace node
 
-NODE_MODULE_CONTEXT_AWARE_INTERNAL(stream_pipe,
-                                   node::InitializeStreamPipe)
+NODE_BINDING_CONTEXT_AWARE_INTERNAL(stream_pipe, node::InitializeStreamPipe)

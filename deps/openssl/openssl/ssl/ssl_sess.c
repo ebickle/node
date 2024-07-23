@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2023 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright 2005 Nokia. All rights reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -190,15 +190,19 @@ SSL_SESSION *ssl_session_dup(const SSL_SESSION *src, int ticket)
     dest->ticket_appdata = NULL;
     memset(&dest->ex_data, 0, sizeof(dest->ex_data));
 
-    /* We deliberately don't copy the prev and next pointers */
+    /* As the copy is not in the cache, we remove the associated pointers */
     dest->prev = NULL;
     dest->next = NULL;
+    dest->owner = NULL;
 
     dest->references = 1;
 
     dest->lock = CRYPTO_THREAD_lock_new();
-    if (dest->lock == NULL)
+    if (dest->lock == NULL) {
+        OPENSSL_free(dest);
+        dest = NULL;
         goto err;
+    }
 
     if (!CRYPTO_new_ex_data(CRYPTO_EX_INDEX_SSL_SESSION, dest, &dest->ex_data))
         goto err;
@@ -748,6 +752,25 @@ int SSL_CTX_add_session(SSL_CTX *ctx, SSL_SESSION *c)
         c->time = time(NULL);
         ssl_session_calculate_timeout(c);
     }
+
+    if (s == NULL) {
+        /*
+         * new cache entry -- remove old ones if cache has become too large
+         * delete cache entry *before* add, so we don't remove the one we're adding!
+         */
+
+        ret = 1;
+
+        if (SSL_CTX_sess_get_cache_size(ctx) > 0) {
+            while (SSL_CTX_sess_number(ctx) >= SSL_CTX_sess_get_cache_size(ctx)) {
+                if (!remove_session_lock(ctx, ctx->session_cache_tail, 0))
+                    break;
+                else
+                    ssl_tsan_counter(ctx, &ctx->stats.sess_cache_full);
+            }
+        }
+    }
+
     SSL_SESSION_list_add(ctx, c);
 
     if (s != NULL) {
@@ -758,21 +781,6 @@ int SSL_CTX_add_session(SSL_CTX *ctx, SSL_SESSION *c)
 
         SSL_SESSION_free(s);    /* s == c */
         ret = 0;
-    } else {
-        /*
-         * new cache entry -- remove old ones if cache has become too large
-         */
-
-        ret = 1;
-
-        if (SSL_CTX_sess_get_cache_size(ctx) > 0) {
-            while (SSL_CTX_sess_number(ctx) > SSL_CTX_sess_get_cache_size(ctx)) {
-                if (!remove_session_lock(ctx, ctx->session_cache_tail, 0))
-                    break;
-                else
-                    ssl_tsan_counter(ctx, &ctx->stats.sess_cache_full);
-            }
-        }
     }
     CRYPTO_THREAD_unlock(ctx->lock);
     return ret;

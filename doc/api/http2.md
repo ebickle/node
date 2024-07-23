@@ -43,7 +43,7 @@ let http2;
 try {
   http2 = require('node:http2');
 } catch (err) {
-  console.log('http2 support is disabled!');
+  console.error('http2 support is disabled!');
 }
 ```
 
@@ -61,7 +61,7 @@ let http2;
 try {
   http2 = await import('node:http2');
 } catch (err) {
-  console.log('http2 support is disabled!');
+  console.error('http2 support is disabled!');
 }
 ```
 
@@ -90,7 +90,7 @@ const fs = require('node:fs');
 
 const server = http2.createSecureServer({
   key: fs.readFileSync('localhost-privkey.pem'),
-  cert: fs.readFileSync('localhost-cert.pem')
+  cert: fs.readFileSync('localhost-cert.pem'),
 });
 server.on('error', (err) => console.error(err));
 
@@ -98,7 +98,7 @@ server.on('stream', (stream, headers) => {
   // stream is a Duplex
   stream.respond({
     'content-type': 'text/html; charset=utf-8',
-    ':status': 200
+    ':status': 200,
   });
   stream.end('<h1>Hello World</h1>');
 });
@@ -121,7 +121,7 @@ The following illustrates an HTTP/2 client:
 const http2 = require('node:http2');
 const fs = require('node:fs');
 const client = http2.connect('https://localhost:8443', {
-  ca: fs.readFileSync('localhost-cert.pem')
+  ca: fs.readFileSync('localhost-cert.pem'),
 });
 client.on('error', (err) => console.error(err));
 
@@ -327,7 +327,7 @@ session.on('stream', (stream, headers, flags) => {
   // ...
   stream.respond({
     ':status': 200,
-    'content-type': 'text/plain; charset=utf-8'
+    'content-type': 'text/plain; charset=utf-8',
   });
   stream.write('hello ');
   stream.end('world');
@@ -348,13 +348,13 @@ const server = http2.createServer();
 server.on('stream', (stream, headers) => {
   stream.respond({
     'content-type': 'text/html; charset=utf-8',
-    ':status': 200
+    ':status': 200,
   });
   stream.on('error', (error) => console.error(error));
   stream.end('<h1>Hello World</h1>');
 });
 
-server.listen(80);
+server.listen(8000);
 ```
 
 Even though HTTP/2 streams and network sockets are not in a 1:1 correspondence,
@@ -611,12 +611,14 @@ const http2 = require('node:http2');
 
 const server = http2.createServer();
 const expectedWindowSize = 2 ** 20;
-server.on('connect', (session) => {
+server.on('session', (session) => {
 
   // Set local window size to be 2 ** 20
   session.setLocalWindowSize(expectedWindowSize);
 });
 ```
+
+For http2 clients the proper event is either `'connect'` or `'remoteSettings'`.
 
 #### `http2session.setTimeout(msecs, callback)`
 
@@ -971,7 +973,7 @@ const http2 = require('node:http2');
 const clientSession = http2.connect('https://localhost:1234');
 const {
   HTTP2_HEADER_PATH,
-  HTTP2_HEADER_STATUS
+  HTTP2_HEADER_STATUS,
 } = http2.constants;
 
 const req = clientSession.request({ [HTTP2_HEADER_PATH]: '/' });
@@ -1038,7 +1040,7 @@ encoding.
 ```js
 stream.respond({
   'content-type': 'text/html; charset=utf-8',
-  ':status': 200
+  ':status': 200,
 });
 ```
 
@@ -1731,7 +1733,7 @@ server.on('stream', (stream) => {
   const headers = {
     'content-length': stat.size,
     'last-modified': stat.mtime.toUTCString(),
-    'content-type': 'text/plain; charset=utf-8'
+    'content-type': 'text/plain; charset=utf-8',
   };
   stream.respondWithFD(fd, headers);
   stream.on('close', () => fs.closeSync(fd));
@@ -1776,7 +1778,7 @@ server.on('stream', (stream) => {
   const headers = {
     'content-length': stat.size,
     'last-modified': stat.mtime.toUTCString(),
-    'content-type': 'text/plain; charset=utf-8'
+    'content-type': 'text/plain; charset=utf-8',
   };
   stream.respondWithFD(fd, headers, { waitForTrailers: true });
   stream.on('wantTrailers', () => {
@@ -1850,7 +1852,7 @@ server.on('stream', (stream) => {
       }
     } catch (err) {
       // Perform actual error handling.
-      console.log(err);
+      console.error(err);
     }
     stream.end();
   }
@@ -2022,7 +2024,7 @@ const {
   HTTP2_HEADER_METHOD,
   HTTP2_HEADER_PATH,
   HTTP2_HEADER_STATUS,
-  HTTP2_HEADER_CONTENT_TYPE
+  HTTP2_HEADER_CONTENT_TYPE,
 } = http2.constants;
 
 const server = http2.createServer();
@@ -2032,7 +2034,7 @@ server.on('stream', (stream, headers, flags) => {
   // ...
   stream.respond({
     [HTTP2_HEADER_STATUS]: 200,
-    [HTTP2_HEADER_CONTENT_TYPE]: 'text/plain; charset=utf-8'
+    [HTTP2_HEADER_CONTENT_TYPE]: 'text/plain; charset=utf-8',
   });
   stream.write('hello ');
   stream.end('world');
@@ -2069,6 +2071,17 @@ all active sessions.
 If `callback` is provided, it is not invoked until all active sessions have been
 closed, although the server has already stopped allowing new sessions. See
 [`net.Server.close()`][] for more details.
+
+#### `server[Symbol.asyncDispose]()`
+
+<!-- YAML
+added: v20.4.0
+-->
+
+> Stability: 1 - Experimental
+
+Calls [`server.close()`][] and returns a promise that fulfills when the
+server has closed.
 
 #### `server.setTimeout([msecs][, callback])`
 
@@ -2242,7 +2255,7 @@ const {
   HTTP2_HEADER_METHOD,
   HTTP2_HEADER_PATH,
   HTTP2_HEADER_STATUS,
-  HTTP2_HEADER_CONTENT_TYPE
+  HTTP2_HEADER_CONTENT_TYPE,
 } = http2.constants;
 
 const options = getOptionsSomehow();
@@ -2254,7 +2267,7 @@ server.on('stream', (stream, headers, flags) => {
   // ...
   stream.respond({
     [HTTP2_HEADER_STATUS]: 200,
-    [HTTP2_HEADER_CONTENT_TYPE]: 'text/plain; charset=utf-8'
+    [HTTP2_HEADER_CONTENT_TYPE]: 'text/plain; charset=utf-8',
   });
   stream.write('hello ');
   stream.end('world');
@@ -2485,6 +2498,11 @@ changes:
     **Default:** `100`.
   * `settings` {HTTP/2 Settings Object} The initial settings to send to the
     remote peer upon connection.
+  * `remoteCustomSettings` {Array} The array of integer values determines the
+    settings types, which are included in the `CustomSettings`-property of
+    the received remoteSettings. Please see the `CustomSettings`-property of
+    the `Http2Settings` object for more information,
+    on the allowed setting types.
   * `Http1IncomingMessage` {http.IncomingMessage} Specifies the
     `IncomingMessage` class to used for HTTP/1 fallback. Useful for extending
     the original `http.IncomingMessage`. **Default:** `http.IncomingMessage`.
@@ -2527,12 +2545,12 @@ const server = http2.createServer();
 server.on('stream', (stream, headers) => {
   stream.respond({
     'content-type': 'text/html; charset=utf-8',
-    ':status': 200
+    ':status': 200,
   });
   stream.end('<h1>Hello World</h1>');
 });
 
-server.listen(80);
+server.listen(8000);
 ```
 
 ### `http2.createSecureServer(options[, onRequestHandler])`
@@ -2639,6 +2657,10 @@ changes:
     **Default:** `100`.
   * `settings` {HTTP/2 Settings Object} The initial settings to send to the
     remote peer upon connection.
+  * `remoteCustomSettings` {Array} The array of integer values determines the
+    settings types, which are included in the `customSettings`-property of the
+    received remoteSettings. Please see the `customSettings`-property of the
+    `Http2Settings` object for more information, on the allowed setting types.
   * ...: Any [`tls.createServer()`][] options can be provided. For
     servers, the identity options (`pfx` or `key`/`cert`) are usually required.
   * `origins` {string\[]} An array of origin strings to send within an `ORIGIN`
@@ -2659,7 +2681,7 @@ const fs = require('node:fs');
 
 const options = {
   key: fs.readFileSync('server-key.pem'),
-  cert: fs.readFileSync('server-cert.pem')
+  cert: fs.readFileSync('server-cert.pem'),
 };
 
 // Create a secure HTTP/2 server
@@ -2668,12 +2690,12 @@ const server = http2.createSecureServer(options);
 server.on('stream', (stream, headers) => {
   stream.respond({
     'content-type': 'text/html; charset=utf-8',
-    ':status': 200
+    ':status': 200,
   });
   stream.end('<h1>Hello World</h1>');
 });
 
-server.listen(80);
+server.listen(8443);
 ```
 
 ### `http2.connect(authority[, options][, listener])`
@@ -2767,6 +2789,10 @@ changes:
     `'https:'`
   * `settings` {HTTP/2 Settings Object} The initial settings to send to the
     remote peer upon connection.
+  * `remoteCustomSettings` {Array} The array of integer values determines the
+    settings types, which are included in the `CustomSettings`-property of the
+    received remoteSettings. Please see the `CustomSettings`-property of the
+    `Http2Settings` object for more information, on the allowed setting types.
   * `createConnection` {Function} An optional callback that receives the `URL`
     instance passed to `connect` and the `options` object, and returns any
     [`Duplex`][] stream that is to be used as the connection for this session.
@@ -2864,6 +2890,21 @@ added: v8.4.0
 Returns a [HTTP/2 Settings Object][] containing the deserialized settings from
 the given `Buffer` as generated by `http2.getPackedSettings()`.
 
+### `http2.performServerHandshake(socket[, options])`
+
+<!-- YAML
+added:
+  - v21.7.0
+  - v20.12.0
+-->
+
+* `socket` {stream.Duplex}
+* `options` {Object}
+  * ...: Any [`http2.createServer()`][] option can be provided.
+* Returns: {ServerHttp2Session}
+
+Create an HTTP/2 server session from an existing socket.
+
 ### `http2.sensitiveHeaders`
 
 <!-- YAML
@@ -2889,7 +2930,7 @@ to send more than one value per header field).
 const headers = {
   ':status': '200',
   'content-type': 'text-plain',
-  'ABC': ['has', 'more', 'than', 'one', 'value']
+  'ABC': ['has', 'more', 'than', 'one', 'value'],
 };
 
 stream.respond(headers);
@@ -2940,7 +2981,7 @@ const headers = {
   'content-type': 'text-plain',
   'cookie': 'some-cookie',
   'other-sensitive-header': 'very secret data',
-  [http2.sensitiveHeaders]: ['cookie', 'other-sensitive-header']
+  [http2.sensitiveHeaders]: ['cookie', 'other-sensitive-header'],
 };
 
 stream.respond(headers);
@@ -2999,6 +3040,21 @@ properties.
   meaningful if sent by the server. Once the `enableConnectProtocol` setting
   has been enabled for a given `Http2Session`, it cannot be disabled.
   **Default:** `false`.
+* `customSettings` {Object} Specifies additional settings, yet not implemented
+  in node and the underlying libraries. The key of the object defines the
+  numeric value of the settings type (as defined in the "HTTP/2 SETTINGS"
+  registry established by \[RFC 7540]) and the values the actual numeric value
+  of the settings.
+  The settings type has to be an integer in the range from 1 to 2^16-1.
+  It should not be a settings type already handled by node, i.e. currently
+  it should be greater than 6, although it is not an error.
+  The values need to be unsigned integers in the range from 0 to 2^32-1.
+  Currently, a maximum of up 10 custom settings is supported.
+  It is only supported for sending SETTINGS, or for receiving settings values
+  specified in the `remoteCustomSettings` options of the server or client
+  object. Do not mix the `customSettings`-mechanism for a settings id with
+  interfaces for the natively handled settings, in case a setting becomes
+  natively supported in a future node version.
 
 All additional properties on the settings object are ignored.
 
@@ -3126,7 +3182,7 @@ const client = http2.connect('http://localhost:8001');
 // for CONNECT requests or an error will be thrown.
 const req = client.request({
   ':method': 'CONNECT',
-  ':authority': `localhost:${port}`
+  ':authority': 'localhost:8000',
 });
 
 req.on('response', (headers) => {
@@ -3222,7 +3278,7 @@ const key = readFileSync('./key.pem');
 
 const server = createSecureServer(
   { cert, key, allowHTTP1: true },
-  onRequest
+  onRequest,
 ).listen(4443);
 
 function onRequest(req, res) {
@@ -3232,7 +3288,7 @@ function onRequest(req, res) {
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({
     alpnProtocol,
-    httpVersion: req.httpVersion
+    httpVersion: req.httpVersion,
   }));
 }
 ```
@@ -3531,7 +3587,7 @@ Accept: text/plain
 
 Then `request.url` will be:
 
-<!-- eslint-disable semi -->
+<!-- eslint-disable @stylistic/js/semi -->
 
 ```js
 '/status?name=ryan'
@@ -3604,6 +3660,38 @@ message) to the response.
 
 Attempting to set a header field name or value that contains invalid characters
 will result in a [`TypeError`][] being thrown.
+
+#### `response.appendHeader(name, value)`
+
+<!-- YAML
+added:
+  - v21.7.0
+  - v20.12.0
+-->
+
+* `name` {string}
+* `value` {string|string\[]}
+
+Append a single header value to the header object.
+
+If the value is an array, this is equivalent to calling this method multiple
+times.
+
+If there were no previous values for the header, this is equivalent to calling
+[`response.setHeader()`][].
+
+Attempting to set a header field name or value that contains invalid characters
+will result in a [`TypeError`][] being thrown.
+
+```js
+// Returns headers including "set-cookie: a" and "set-cookie: b"
+const server = http2.createServer((req, res) => {
+  res.setHeader('set-cookie', 'a');
+  res.appendHeader('set-cookie', 'b');
+  res.writeHead(200);
+  res.end('ok');
+});
+```
 
 #### `response.connection`
 
@@ -4226,6 +4314,7 @@ you need to implement any fall-back behavior yourself.
 [`response.write(data, encoding)`]: http.md#responsewritechunk-encoding-callback
 [`response.writeContinue()`]: #responsewritecontinue
 [`response.writeHead()`]: #responsewriteheadstatuscode-statusmessage-headers
+[`server.close()`]: #serverclosecallback
 [`server.maxHeadersCount`]: http.md#servermaxheaderscount
 [`tls.Server.close()`]: tls.md#serverclosecallback
 [`tls.TLSSocket`]: tls.md#class-tlstlssocket

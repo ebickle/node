@@ -54,6 +54,10 @@ Create a new instance of the `inspector.Session` class. The inspector session
 needs to be connected through [`session.connect()`][] before the messages
 can be dispatched to the inspector backend.
 
+When using `Session`, the object outputted by the console API will not be
+released, unless we performed manually `Runtime.DiscardConsoleEntries`
+command.
+
 #### Event: `'inspectorNotification'`
 
 <!-- YAML
@@ -69,6 +73,9 @@ session.on('inspectorNotification', (message) => console.log(message.method));
 // Debugger.paused
 // Debugger.resumed
 ```
+
+> **Caveat** Breakpoints with same-thread session is not recommended, see
+> [support of breakpoints][].
 
 It is also possible to subscribe only to notifications with specific method:
 
@@ -93,6 +100,9 @@ session.on('Debugger.paused', ({ params }) => {
 });
 // [ '/the/file/that/has/the/breakpoint.js:11:0' ]
 ```
+
+> **Caveat** Breakpoints with same-thread session is not recommended, see
+> [support of breakpoints][].
 
 #### `session.connect()`
 
@@ -144,7 +154,7 @@ try {
 } catch (error) {
   console.error(error);
 }
-// Output: { type: 'number', value: 4, description: '4' }
+// Output: { result: { type: 'number', value: 4, description: '4' } }
 ```
 
 The latest version of the V8 inspector protocol is published on the
@@ -223,6 +233,10 @@ Create a new instance of the `inspector.Session` class. The inspector session
 needs to be connected through [`session.connect()`][] before the messages
 can be dispatched to the inspector backend.
 
+When using `Session`, the object outputted by the console API will not be
+released, unless we performed manually `Runtime.DiscardConsoleEntries`
+command.
+
 #### Event: `'inspectorNotification'`
 
 <!-- YAML
@@ -238,6 +252,9 @@ session.on('inspectorNotification', (message) => console.log(message.method));
 // Debugger.paused
 // Debugger.resumed
 ```
+
+> **Caveat** Breakpoints with same-thread session is not recommended, see
+> [support of breakpoints][].
 
 It is also possible to subscribe only to notifications with specific method:
 
@@ -262,6 +279,9 @@ session.on('Debugger.paused', ({ params }) => {
 });
 // [ '/the/file/that/has/the/breakpoint.js:11:0' ]
 ```
+
+> **Caveat** Breakpoints with same-thread session is not recommended, see
+> [support of breakpoints][].
 
 #### `session.connect()`
 
@@ -324,6 +344,10 @@ Node.js inspector supports all the Chrome DevTools Protocol domains declared
 by V8. Chrome DevTools Protocol domain provides an interface for interacting
 with one of the runtime agents used to inspect the application state and listen
 to the run-time events.
+
+You can not set `reportProgress` to `true` when sending a
+`HeapProfiler.takeHeapSnapshot` or `HeapProfiler.stopTrackingHeapObjects`
+command to V8.
 
 #### Example usage
 
@@ -391,7 +415,8 @@ changes:
     description: The API is exposed in the worker threads.
 -->
 
-Deactivate the inspector. Blocks until there are no active connections.
+Attempts to close all remaining connections, blocking the event loop until all
+are closed. Once all connections are closed, deactivates the inspector.
 
 ### `inspector.console`
 
@@ -406,12 +431,20 @@ console.
 
 ### `inspector.open([port[, host[, wait]]])`
 
+<!-- YAML
+changes:
+  - version: v20.6.0
+    pr-url: https://github.com/nodejs/node/pull/48765
+    description: inspector.open() now returns a `Disposable` object.
+-->
+
 * `port` {number} Port to listen on for inspector connections. Optional.
   **Default:** what was specified on the CLI.
 * `host` {string} Host to listen on for inspector connections. Optional.
   **Default:** what was specified on the CLI.
 * `wait` {boolean} Block until a client has connected. Optional.
   **Default:** `false`.
+* Returns: {Disposable} A Disposable that calls [`inspector.close()`][].
 
 Activate inspector on host and port. Equivalent to
 `node --inspect=[[host:]port]`, but can be done programmatically after node has
@@ -455,9 +488,96 @@ Blocks until a client (existing or connected later) has sent
 
 An exception will be thrown if there is no active inspector.
 
+## Integration with DevTools
+
+The `node:inspector` module provides an API for integrating with devtools that support Chrome DevTools Protocol.
+DevTools frontends connected to a running Node.js instance can capture protocol events emitted from the instance
+and display them accordingly to facilitate debugging.
+The following methods broadcast a protocol event to all connected frontends.
+The `params` passed to the methods can be optional, depending on the protocol.
+
+```js
+// The `Network.requestWillBeSent` event will be fired.
+inspector.Network.requestWillBeSent({
+  requestId: 'request-id-1',
+  timestamp: Date.now() / 1000,
+  wallTime: Date.now(),
+  request: {
+    url: 'https://nodejs.org/en',
+    method: 'GET',
+  }
+});
+```
+
+### `inspector.Network.requestWillBeSent([params])`
+
+<!-- YAML
+added:
+ - REPLACEME
+-->
+
+> Stability: 1 - Experimental
+
+* `params` {Object}
+
+This feature is only available with the `--experimental-network-inspection` flag enabled.
+
+Broadcasts the `Network.requestWillBeSent` event to connected frontends. This event indicates that
+the application is about to send an HTTP request.
+
+### `inspector.Network.responseReceived([params])`
+
+<!-- YAML
+added:
+ - REPLACEME
+-->
+
+> Stability: 1 - Experimental
+
+* `params` {Object}
+
+This feature is only available with the `--experimental-network-inspection` flag enabled.
+
+Broadcasts the `Network.responseReceived` event to connected frontends. This event indicates that
+HTTP response is available.
+
+### `inspector.Network.loadingFinished([params])`
+
+<!-- YAML
+added:
+ - REPLACEME
+-->
+
+> Stability: 1 - Experimental
+
+* `params` {Object}
+
+This feature is only available with the `--experimental-network-inspection` flag enabled.
+
+Broadcasts the `Network.loadingFinished` event to connected frontends. This event indicates that
+HTTP request has finished loading.
+
+## Support of breakpoints
+
+The Chrome DevTools Protocol [`Debugger` domain][] allows an
+`inspector.Session` to attach to a program and set breakpoints to step through
+the codes.
+
+However, setting breakpoints with a same-thread `inspector.Session`, which is
+connected by [`session.connect()`][], should be avoided as the program being
+attached and paused is exactly the debugger itself. Instead, try connect to the
+main thread by [`session.connectToMainThread()`][] and set breakpoints in a
+worker thread, or connect with a [Debugger][] program over WebSocket
+connection.
+
 [CPU Profiler]: https://chromedevtools.github.io/devtools-protocol/v8/Profiler
 [Chrome DevTools Protocol Viewer]: https://chromedevtools.github.io/devtools-protocol/v8/
+[Debugger]: debugger.md
 [Heap Profiler]: https://chromedevtools.github.io/devtools-protocol/v8/HeapProfiler
 [`'Debugger.paused'`]: https://chromedevtools.github.io/devtools-protocol/v8/Debugger#event-paused
+[`Debugger` domain]: https://chromedevtools.github.io/devtools-protocol/v8/Debugger
+[`inspector.close()`]: #inspectorclose
 [`session.connect()`]: #sessionconnect
+[`session.connectToMainThread()`]: #sessionconnecttomainthread
 [security warning]: cli.md#warning-binding-inspector-to-a-public-ipport-combination-is-insecure
+[support of breakpoints]: #support-of-breakpoints

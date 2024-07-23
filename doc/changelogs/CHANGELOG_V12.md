@@ -67,6 +67,9 @@
 </table>
 
 * Other Versions
+  * [22.x](CHANGELOG_V22.md)
+  * [21.x](CHANGELOG_V21.md)
+  * [20.x](CHANGELOG_V20.md)
   * [19.x](CHANGELOG_V19.md)
   * [18.x](CHANGELOG_V18.md)
   * [17.x](CHANGELOG_V17.md)
@@ -1821,7 +1824,7 @@ const { Console } = require('console');
 const customConsole = new Console({
   stdout: process.stdout,
   stderr: process.stderr,
-  groupIndentation: 10
+  groupIndentation: 10,
 });
 
 customConsole.log('foo');

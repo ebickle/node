@@ -11,9 +11,7 @@
 
 #include "src/wasm/value-type.h"
 
-namespace v8 {
-namespace internal {
-namespace wasm {
+namespace v8::internal::wasm {
 
 struct WasmModule;
 
@@ -47,19 +45,24 @@ V8_NOINLINE V8_EXPORT_PRIVATE bool EquivalentTypes(ValueType type1,
 // - (ref ht1) <: (ref null? ht2) iff ht1 <: ht2.
 // - rtt1 <: rtt2 iff rtt1 ~ rtt2.
 // For heap types, the following subtyping rules hold:
-// - The abstract heap types form the following type hierarchy:
-//      any (a.k.a. extern)
-//            /   \
-//           eq   func
-//          /  \
-//        i31   data
-//               |
-//             array
+// - The abstract heap types form the following type hierarchies:
+//
+//                   any               func         extern
+//               /        \             |             |
+//             eq          \          nofunc       noextern
+//          /   |   \       \
+//       i31  array  struct  string
+//          \___|______|_____/
+//                  |
+//                 none
+//
 // - All functions are subtypes of func.
-// - All structs are subtypes of data.
+// - All structs are subtypes of struct.
 // - All arrays are subtypes of array.
 // - An indexed heap type h1 is a subtype of indexed heap type h2 if h2 is
 //   transitively an explicit canonical supertype of h1.
+// Note that {any} includes references introduced by the host which belong to
+// none of any's subtypes (e.g. JS objects).
 V8_INLINE bool IsSubtypeOf(ValueType subtype, ValueType supertype,
                            const WasmModule* sub_module,
                            const WasmModule* super_module) {
@@ -73,6 +76,13 @@ V8_INLINE bool IsSubtypeOf(ValueType subtype, ValueType supertype,
   // If the types are trivially identical, exit early.
   if (V8_LIKELY(subtype == supertype)) return true;
   return IsSubtypeOfImpl(subtype, supertype, module, module);
+}
+
+V8_INLINE bool TypesUnrelated(ValueType type1, ValueType type2,
+                              const WasmModule* module1,
+                              const WasmModule* module2) {
+  return !IsSubtypeOf(type1, type2, module1, module2) &&
+         !IsSubtypeOf(type2, type1, module2, module1);
 }
 
 V8_INLINE bool IsHeapSubtypeOf(HeapType subtype, HeapType supertype,
@@ -100,6 +110,7 @@ V8_INLINE bool HeapTypesUnrelated(HeapType heap1, HeapType heap2,
 // Checks whether {subtype_index} is valid as a declared subtype of
 // {supertype_index}.
 // - Both type must be of the same kind (function, struct, or array).
+// - Both type must have the same {is_shared} flag.
 // - Structs: Subtype must have at least as many fields as supertype,
 //   covariance for respective immutable fields, equivalence for respective
 //   mutable fields.
@@ -111,6 +122,8 @@ V8_EXPORT_PRIVATE bool ValidSubtypeDefinition(uint32_t subtype_index,
                                               uint32_t supertype_index,
                                               const WasmModule* sub_module,
                                               const WasmModule* super_module);
+
+V8_EXPORT_PRIVATE bool IsShared(ValueType type, const WasmModule* module);
 
 struct TypeInModule {
   ValueType type;
@@ -135,6 +148,7 @@ inline std::ostream& operator<<(std::ostream& oss, TypeInModule type) {
              << reinterpret_cast<intptr_t>(type.module);
 }
 
+// Returns {kWasmBottom} if the union of {type1} and {type2} is not defined.
 V8_EXPORT_PRIVATE TypeInModule Union(ValueType type1, ValueType type2,
                                      const WasmModule* module1,
                                      const WasmModule* module2);
@@ -156,8 +170,10 @@ V8_INLINE V8_EXPORT_PRIVATE TypeInModule Intersection(TypeInModule type1,
 // Returns the matching abstract null type (none, nofunc, noextern).
 ValueType ToNullSentinel(TypeInModule type);
 
-}  // namespace wasm
-}  // namespace internal
-}  // namespace v8
+// Returns if two types share the same type hierarchy (any, extern, funcref).
+bool IsSameTypeHierarchy(HeapType type1, HeapType type2,
+                         const WasmModule* module);
+
+}  // namespace v8::internal::wasm
 
 #endif  // V8_WASM_WASM_SUBTYPING_H_

@@ -8,13 +8,13 @@ const jsPrimitives = {
   number: 'Number',
   string: 'String',
   symbol: 'Symbol',
-  undefined: 'Undefined'
+  undefined: 'Undefined',
 };
 
 const jsGlobalObjectsUrl = `${jsDocPrefix}Reference/Global_Objects/`;
 const jsGlobalTypes = [
   'AggregateError', 'Array', 'ArrayBuffer', 'DataView', 'Date', 'Error',
-  'EvalError', 'Function', 'Map', 'Object', 'Promise', 'RangeError',
+  'EvalError', 'Function', 'Map', 'Object', 'Promise', 'Proxy', 'RangeError',
   'ReferenceError', 'RegExp', 'Set', 'SharedArrayBuffer', 'SyntaxError',
   'TypeError', 'TypedArray', 'URIError', 'Uint8Array',
 ];
@@ -43,6 +43,7 @@ const customTypesMap = {
     `${jsDocPrefix}Reference/Global_Objects/WebAssembly/Instance`,
 
   'Blob': 'buffer.html#class-blob',
+  'File': 'buffer.html#class-file',
 
   'BroadcastChannel':
     'worker_threads.html#class-broadcastchannel-' +
@@ -55,6 +56,8 @@ const customTypesMap = {
 
   'Module Namespace Object':
     'https://tc39.github.io/ecma262/#sec-module-namespace-exotic-objects',
+
+  'AsyncLocalStorage': 'async_context.html#class-asynclocalstorage',
 
   'AsyncHook': 'async_hooks.html#async_hookscreatehookcallbacks',
   'AsyncResource': 'async_hooks.html#class-asyncresource',
@@ -107,6 +110,7 @@ const customTypesMap = {
   'dgram.Socket': 'dgram.html#class-dgramsocket',
 
   'Channel': 'diagnostics_channel.html#class-channel',
+  'TracingChannel': 'diagnostics_channel.html#class-tracingchannel',
 
   'Domain': 'domain.html#class-domain',
 
@@ -126,6 +130,7 @@ const customTypesMap = {
   'fs.FSWatcher': 'fs.html#class-fsfswatcher',
   'fs.ReadStream': 'fs.html#class-fsreadstream',
   'fs.Stats': 'fs.html#class-fsstats',
+  'fs.StatFs': 'fs.html#class-fsstatfs',
   'fs.StatWatcher': 'fs.html#class-fsstatwatcher',
   'fs.WriteStream': 'fs.html#class-fswritestream',
 
@@ -156,6 +161,8 @@ const customTypesMap = {
 
   'module.SourceMap':
     'module.html#class-modulesourcemap',
+
+  'MockModuleContext': 'test.html#class-mockmodulecontext',
 
   'require': 'modules.html#requireid',
 
@@ -192,6 +199,8 @@ const customTypesMap = {
 
   'repl.REPLServer': 'repl.html#class-replserver',
 
+  'StatementSync': 'sqlite.html#class-statementsync',
+
   'Stream': 'stream.html#stream',
   'stream.Duplex': 'stream.html#class-streamduplex',
   'Duplex': 'stream.html#class-streamduplex',
@@ -206,13 +215,16 @@ const customTypesMap = {
   'Timeout': 'timers.html#class-timeout',
   'Timer': 'timers.html#timers',
 
-  'TapStream': 'test.html#class-tapstream',
+  'TestsStream': 'test.html#class-testsstream',
 
   'tls.SecureContext': 'tls.html#tlscreatesecurecontextoptions',
   'tls.Server': 'tls.html#class-tlsserver',
   'tls.TLSSocket': 'tls.html#class-tlstlssocket',
 
   'Tracing': 'tracing.html#tracing-object',
+
+  'tty.ReadStream': 'tty.html#class-ttyreadstream',
+  'tty.WriteStream': 'tty.html#class-ttywritestream',
 
   'URL': 'url.html#the-whatwg-url-api',
   'URLSearchParams': 'url.html#class-urlsearchparams',
@@ -222,6 +234,8 @@ const customTypesMap = {
   'vm.Module': 'vm.html#class-vmmodule',
   'vm.Script': 'vm.html#class-vmscript',
   'vm.SourceTextModule': 'vm.html#class-vmsourcetextmodule',
+  'vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER':
+      'vm.html#vmconstantsuse_main_context_default_loader',
 
   'MessagePort': 'worker_threads.html#class-messageport',
   'Worker': 'worker_threads.html#class-worker',
@@ -265,6 +279,7 @@ const customTypesMap = {
   'Headers': 'https://developer.mozilla.org/en-US/docs/Web/API/Headers',
   'Response': 'https://developer.mozilla.org/en-US/docs/Web/API/Response',
   'Request': 'https://developer.mozilla.org/en-US/docs/Web/API/Request',
+  'Disposable': 'https://tc39.es/proposal-explicit-resource-management/#sec-disposable-interface',
 };
 
 const arrayPart = /(?:\[])+$/;
@@ -299,8 +314,8 @@ export function toLink(typeInput) {
           `<a href="${typeUrl}" class="type">&lt;${typeTextFull}&gt;</a>`);
       } else {
         throw new Error(
-          `Unrecognized type: '${typeTextFull}'.\n` +
-          `Please, edit the type or update '${import.meta.url}'.`
+          `Unrecognized type: '${typeTextFull}' in '${import.meta.url}'.\n` +
+          'Valid types can be found at https://github.com/nodejs/node/blob/HEAD/tools/doc/type-parser.mjs',
         );
       }
     } else {

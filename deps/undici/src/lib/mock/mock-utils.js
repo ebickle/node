@@ -8,8 +8,13 @@ const {
   kOrigin,
   kGetNetConnect
 } = require('./mock-symbols')
-const { buildURL, nop } = require('../core/util')
-const { STATUS_CODES } = require('http')
+const { buildURL } = require('../core/util')
+const { STATUS_CODES } = require('node:http')
+const {
+  types: {
+    isPromise
+  }
+} = require('node:util')
 
 function matchValue (match, value) {
   if (typeof match === 'string') {
@@ -133,19 +138,20 @@ function getMockDispatch (mockDispatches, key) {
   // Match method
   matchedMockDispatches = matchedMockDispatches.filter(({ method }) => matchValue(method, key.method))
   if (matchedMockDispatches.length === 0) {
-    throw new MockNotMatchedError(`Mock dispatch not matched for method '${key.method}'`)
+    throw new MockNotMatchedError(`Mock dispatch not matched for method '${key.method}' on path '${resolvedPath}'`)
   }
 
   // Match body
   matchedMockDispatches = matchedMockDispatches.filter(({ body }) => typeof body !== 'undefined' ? matchValue(body, key.body) : true)
   if (matchedMockDispatches.length === 0) {
-    throw new MockNotMatchedError(`Mock dispatch not matched for body '${key.body}'`)
+    throw new MockNotMatchedError(`Mock dispatch not matched for body '${key.body}' on path '${resolvedPath}'`)
   }
 
   // Match headers
   matchedMockDispatches = matchedMockDispatches.filter((mockDispatch) => matchHeaders(mockDispatch, key.headers))
   if (matchedMockDispatches.length === 0) {
-    throw new MockNotMatchedError(`Mock dispatch not matched for headers '${typeof key.headers === 'object' ? JSON.stringify(key.headers) : key.headers}'`)
+    const headers = typeof key.headers === 'object' ? JSON.stringify(key.headers) : key.headers
+    throw new MockNotMatchedError(`Mock dispatch not matched for headers '${headers}' on path '${resolvedPath}'`)
   }
 
   return matchedMockDispatches[0]
@@ -183,7 +189,21 @@ function buildKey (opts) {
 }
 
 function generateKeyValues (data) {
-  return Object.entries(data).reduce((keyValuePairs, [key, value]) => [...keyValuePairs, key, value], [])
+  const keys = Object.keys(data)
+  const result = []
+  for (let i = 0; i < keys.length; ++i) {
+    const key = keys[i]
+    const value = data[key]
+    const name = Buffer.from(`${key}`)
+    if (Array.isArray(value)) {
+      for (let j = 0; j < value.length; ++j) {
+        result.push(name, Buffer.from(`${value[j]}`))
+      }
+    } else {
+      result.push(name, Buffer.from(`${value}`))
+    }
+  }
+  return result
 }
 
 /**
@@ -241,21 +261,34 @@ function mockDispatch (opts, handler) {
     handleReply(this[kDispatches])
   }
 
-  function handleReply (mockDispatches) {
+  function handleReply (mockDispatches, _data = data) {
     // fetch's HeadersList is a 1D string array
     const optsHeaders = Array.isArray(opts.headers)
       ? buildHeadersFromArray(opts.headers)
       : opts.headers
-    const responseData = getResponseData(
-      typeof data === 'function' ? data({ ...opts, headers: optsHeaders }) : data
-    )
+    const body = typeof _data === 'function'
+      ? _data({ ...opts, headers: optsHeaders })
+      : _data
+
+    // util.types.isPromise is likely needed for jest.
+    if (isPromise(body)) {
+      // If handleReply is asynchronous, throwing an error
+      // in the callback will reject the promise, rather than
+      // synchronously throw the error, which breaks some tests.
+      // Rather, we wait for the callback to resolve if it is a
+      // promise, and then re-run handleReply with the new body.
+      body.then((newData) => handleReply(mockDispatches, newData))
+      return
+    }
+
+    const responseData = getResponseData(body)
     const responseHeaders = generateKeyValues(headers)
     const responseTrailers = generateKeyValues(trailers)
 
-    handler.abort = nop
-    handler.onHeaders(statusCode, responseHeaders, resume, getStatusText(statusCode))
-    handler.onData(Buffer.from(responseData))
-    handler.onComplete(responseTrailers)
+    handler.onConnect?.(err => handler.onError(err), null)
+    handler.onHeaders?.(statusCode, responseHeaders, resume, getStatusText(statusCode))
+    handler.onData?.(Buffer.from(responseData))
+    handler.onComplete?.(responseTrailers)
     deleteMockDispatch(mockDispatches, key)
   }
 
@@ -325,5 +358,6 @@ module.exports = {
   buildMockDispatch,
   checkNetConnect,
   buildMockOptions,
-  getHeaderByName
+  getHeaderByName,
+  buildHeadersFromArray
 }

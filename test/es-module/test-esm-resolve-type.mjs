@@ -26,7 +26,7 @@ const {
   defaultResolve: resolve
 } = internalResolve;
 
-const rel = (file) => path.join(tmpdir.path, file);
+const rel = (file) => tmpdir.resolve(file);
 const previousCwd = process.cwd();
 const nmDir = rel('node_modules');
 
@@ -37,16 +37,17 @@ try {
    * ensure that resolving by full path does not return the format
    * with the defaultResolver
    */
-  await Promise.all([
+  [
+    [ '/es-modules/package-ends-node_modules/index.js', 'module' ],
     [ '/es-modules/package-type-module/index.js', 'module' ],
     [ '/es-modules/package-type-commonjs/index.js', 'commonjs' ],
-    [ '/es-modules/package-without-type/index.js', 'commonjs' ],
-    [ '/es-modules/package-without-pjson/index.js', 'commonjs' ],
-  ].map(async ([ testScript, expectedType ]) => {
+    [ '/es-modules/package-without-type/index.js', null ],
+    [ '/es-modules/package-without-pjson/index.js', null ],
+  ].forEach(([ testScript, expectedType ]) => {
     const resolvedPath = path.resolve(fixtures.path(testScript));
-    const resolveResult = await resolve(url.pathToFileURL(resolvedPath));
+    const resolveResult = resolve(url.pathToFileURL(resolvedPath));
     assert.strictEqual(resolveResult.format, expectedType);
-  }));
+  });
 
   /**
    * create a test module and try to resolve it by module name.
@@ -54,11 +55,11 @@ try {
    *
    * for test-module-ne: everything .js that is not 'module' is 'commonjs'
    */
-  for (const [ moduleName, moduleExtenstion, moduleType, expectedResolvedType ] of
+  for (const [ moduleName, moduleExtension, moduleType, expectedResolvedType ] of
     [ [ 'test-module-mainjs', 'js', 'module', 'module'],
       [ 'test-module-mainmjs', 'mjs', 'module', 'module'],
       [ 'test-module-cjs', 'js', 'commonjs', 'commonjs'],
-      [ 'test-module-ne', 'js', undefined, 'commonjs'],
+      [ 'test-module-ne', 'js', undefined, null],
     ]) {
     process.chdir(previousCwd);
     tmpdir.refresh();
@@ -72,20 +73,20 @@ try {
     const mDir = rel(`node_modules/${moduleName}`);
     const subDir = rel(`node_modules/${moduleName}/subdir`);
     const pkg = rel(`node_modules/${moduleName}/package.json`);
-    const script = rel(`node_modules/${moduleName}/subdir/mainfile.${moduleExtenstion}`);
+    const script = rel(`node_modules/${moduleName}/subdir/mainfile.${moduleExtension}`);
 
     createDir(nmDir);
     createDir(mDir);
     createDir(subDir);
     const pkgJsonContent = {
       ...(moduleType !== undefined) && { type: moduleType },
-      main: `subdir/mainfile.${moduleExtenstion}`
+      main: `subdir/mainfile.${moduleExtension}`
     };
     fs.writeFileSync(pkg, JSON.stringify(pkgJsonContent));
     fs.writeFileSync(script,
                      'export function esm-resolve-tester() {return 42}');
 
-    const resolveResult = await resolve(`${moduleName}`);
+    const resolveResult = resolve(`${moduleName}`);
     assert.strictEqual(resolveResult.format, expectedResolvedType);
 
     fs.rmSync(nmDir, { recursive: true, force: true });
@@ -168,14 +169,14 @@ try {
     );
 
     // test the resolve
-    const resolveResult = await resolve(`${moduleName}`);
+    const resolveResult = resolve(`${moduleName}`);
     assert.strictEqual(resolveResult.format, 'module');
     assert.ok(resolveResult.url.includes('my-dual-package/es/index.js'));
   }
 
   // TestParameters are ModuleName, mainRequireScript, mainImportScript,
   // mainPackageType, subdirPkgJsonType, expectedResolvedFormat, mainSuffix
-  await Promise.all([
+  [
     [ 'mjs-mod-mod', 'index.js', 'index.mjs', 'module', 'module', 'module'],
     [ 'mjs-com-com', 'idx.js', 'idx.mjs', 'commonjs', 'commonjs', 'module'],
     [ 'mjs-mod-com', 'index.js', 'imp.mjs', 'module', 'commonjs', 'module'],
@@ -186,7 +187,7 @@ try {
     [ 'hmod', 'index.js', 'imp.js', 'commonjs', 'module', 'module', '#Key'],
     [ 'qhmod', 'index.js', 'imp.js', 'commonjs', 'module', 'module', '?k=v#h'],
     [ 'ts-mod-com', 'index.js', 'imp.ts', 'module', 'commonjs', undefined],
-  ].map(async (testVariant) => {
+  ].forEach((testVariant) => {
     const [
       moduleName,
       mainRequireScript,
@@ -234,10 +235,10 @@ try {
     );
 
     // test the resolve
-    const resolveResult = await resolve(`${moduleName}`);
+    const resolveResult = resolve(`${moduleName}`);
     assert.strictEqual(resolveResult.format, expectedResolvedFormat);
     assert.ok(resolveResult.url.endsWith(`${moduleName}/subdir/${mainImportScript}${mainSuffix}`));
-  }));
+  });
 
 } finally {
   process.chdir(previousCwd);

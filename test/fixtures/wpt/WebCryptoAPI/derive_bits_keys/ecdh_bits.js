@@ -56,6 +56,15 @@ function define_tests() {
             }, namedCurve + " mixed case parameters");
 
             // Null length
+            // "Null" is not valid per the current spec
+            //   - https://github.com/w3c/webcrypto/issues/322
+            //   - https://github.com/w3c/webcrypto/issues/329
+            //
+            // Proposal for a spec change:
+            //   - https://github.com/w3c/webcrypto/pull/345
+            //
+            // This test case may be replaced by these new tests:
+            //   - https://github.com/web-platform-tests/wpt/pull/43400
             promise_test(function(test) {
                 return subtle.deriveBits({name: "ECDH", public: publicKeys[namedCurve]}, privateKeys[namedCurve], null)
                 .then(function(derivation) {
@@ -165,7 +174,7 @@ function define_tests() {
             promise_test(function(test) {
                 return subtle.generateKey({name: "AES-CBC", length: 128}, true, ["encrypt", "decrypt"])
                 .then(function(secretKey) {
-                    subtle.deriveBits({name: "ECDH", public: secretKey}, privateKeys[namedCurve], 8 * sizes[namedCurve])
+                    return subtle.deriveBits({name: "ECDH", public: secretKey}, privateKeys[namedCurve], 8 * sizes[namedCurve])
                     .then(function(derivation) {
                         assert_unreached("deriveBits succeeded but should have failed with InvalidAccessError");
                     }, function(err) {
@@ -199,6 +208,8 @@ function define_tests() {
                                             false, ["deriveBits", "deriveKey"])
                             .then(function(key) {
                                 privateKeys[namedCurve] = key;
+                            }, function (err) {
+                                privateKeys[namedCurve] = null;
                             });
             promises.push(operation);
         });
@@ -208,6 +219,8 @@ function define_tests() {
                                             false, ["deriveKey"])
                             .then(function(key) {
                                 noDeriveBitsKeys[namedCurve] = key;
+                            }, function (err) {
+                                noDeriveBitsKeys[namedCurve] = null;
                             });
             promises.push(operation);
         });
@@ -217,6 +230,8 @@ function define_tests() {
                                             false, [])
                             .then(function(key) {
                                 publicKeys[namedCurve] = key;
+                            }, function (err) {
+                                publicKeys[namedCurve] = null;
                             });
             promises.push(operation);
         });
@@ -224,6 +239,8 @@ function define_tests() {
             var operation = subtle.generateKey({name: "ECDSA", namedCurve: namedCurve}, false, ["sign", "verify"])
                             .then(function(keyPair) {
                                 ecdsaKeyPairs[namedCurve] = keyPair;
+                            }, function (err) {
+                                ecdsaKeyPairs[namedCurve] = null;
                             });
             promises.push(operation);
         });

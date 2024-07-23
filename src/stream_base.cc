@@ -40,6 +40,103 @@ using v8::Signature;
 using v8::String;
 using v8::Value;
 
+int StreamBase::Shutdown(v8::Local<v8::Object> req_wrap_obj) {
+  Environment* env = stream_env();
+
+  v8::HandleScope handle_scope(env->isolate());
+
+  if (req_wrap_obj.IsEmpty()) {
+    if (!env->shutdown_wrap_template()
+             ->NewInstance(env->context())
+             .ToLocal(&req_wrap_obj)) {
+      return UV_EBUSY;
+    }
+    StreamReq::ResetObject(req_wrap_obj);
+  }
+
+  BaseObjectPtr<AsyncWrap> req_wrap_ptr;
+  AsyncHooks::DefaultTriggerAsyncIdScope trigger_scope(GetAsyncWrap());
+  ShutdownWrap* req_wrap = CreateShutdownWrap(req_wrap_obj);
+  if (req_wrap != nullptr) req_wrap_ptr.reset(req_wrap->GetAsyncWrap());
+  int err = DoShutdown(req_wrap);
+
+  if (err != 0 && req_wrap != nullptr) {
+    req_wrap->Dispose();
+  }
+
+  const char* msg = Error();
+  if (msg != nullptr) {
+    if (req_wrap_obj
+            ->Set(env->context(),
+                  env->error_string(),
+                  OneByteString(env->isolate(), msg))
+            .IsNothing()) {
+      return UV_EBUSY;
+    }
+    ClearError();
+  }
+
+  return err;
+}
+
+StreamWriteResult StreamBase::Write(uv_buf_t* bufs,
+                                    size_t count,
+                                    uv_stream_t* send_handle,
+                                    v8::Local<v8::Object> req_wrap_obj,
+                                    bool skip_try_write) {
+  Environment* env = stream_env();
+  int err;
+
+  size_t total_bytes = 0;
+  for (size_t i = 0; i < count; ++i) total_bytes += bufs[i].len;
+  bytes_written_ += total_bytes;
+
+  if (send_handle == nullptr && HasDoTryWrite() && !skip_try_write) {
+    err = DoTryWrite(&bufs, &count);
+    if (err != 0 || count == 0) {
+      return StreamWriteResult{false, err, nullptr, total_bytes, {}};
+    }
+  }
+
+  v8::HandleScope handle_scope(env->isolate());
+
+  if (req_wrap_obj.IsEmpty()) {
+    if (!env->write_wrap_template()
+             ->NewInstance(env->context())
+             .ToLocal(&req_wrap_obj)) {
+      return StreamWriteResult{false, UV_EBUSY, nullptr, 0, {}};
+    }
+    StreamReq::ResetObject(req_wrap_obj);
+  }
+
+  AsyncHooks::DefaultTriggerAsyncIdScope trigger_scope(GetAsyncWrap());
+  WriteWrap* req_wrap = CreateWriteWrap(req_wrap_obj);
+  BaseObjectPtr<AsyncWrap> req_wrap_ptr(req_wrap->GetAsyncWrap());
+
+  err = DoWrite(req_wrap, bufs, count, send_handle);
+  bool async = err == 0;
+
+  if (!async) {
+    req_wrap->Dispose();
+    req_wrap = nullptr;
+  }
+
+  const char* msg = Error();
+  if (msg != nullptr) {
+    if (req_wrap_obj
+            ->Set(env->context(),
+                  env->error_string(),
+                  OneByteString(env->isolate(), msg))
+            .IsNothing()) {
+      return StreamWriteResult{false, UV_EBUSY, nullptr, 0, {}};
+    }
+    ClearError();
+  }
+
+  return StreamWriteResult{
+      async, err, req_wrap, total_bytes, std::move(req_wrap_ptr)};
+}
+
 template int StreamBase::WriteString<ASCII>(
     const FunctionCallbackInfo<Value>& args);
 template int StreamBase::WriteString<UTF8>(
@@ -268,7 +365,7 @@ int StreamBase::WriteString(const FunctionCallbackInfo<Value>& args) {
   size_t synchronously_written = 0;
   uv_buf_t buf;
 
-  bool try_write = storage_size <= sizeof(stack_storage) &&
+  bool try_write = HasDoTryWrite() && storage_size <= sizeof(stack_storage) &&
                    (!IsIPCPipe() || send_handle_obj.IsEmpty());
   if (try_write) {
     data_size = StringBytes::Write(isolate,
@@ -373,8 +470,9 @@ MaybeLocal<Value> StreamBase::CallJSOnreadMethod(ssize_t nread,
 
   AsyncWrap* wrap = GetAsyncWrap();
   CHECK_NOT_NULL(wrap);
-  Local<Value> onread = wrap->object()->GetInternalField(
-      StreamBase::kOnReadFunctionField);
+  Local<Value> onread = wrap->object()
+                            ->GetInternalField(StreamBase::kOnReadFunctionField)
+                            .As<Value>();
   CHECK(onread->IsFunction());
   return wrap->MakeCallback(onread.As<Function>(), arraysize(argv), argv);
 }
@@ -394,13 +492,35 @@ Local<Object> StreamBase::GetObject() {
   return GetAsyncWrap()->object();
 }
 
-void StreamBase::AddMethod(Environment* env,
+void StreamBase::AddAccessor(v8::Isolate* isolate,
+                             v8::Local<v8::Signature> signature,
+                             enum v8::PropertyAttribute attributes,
+                             v8::Local<v8::FunctionTemplate> t,
+                             JSMethodFunction* getter,
+                             JSMethodFunction* setter,
+                             v8::Local<v8::String> string) {
+  Local<FunctionTemplate> getter_templ =
+      NewFunctionTemplate(isolate,
+                          getter,
+                          signature,
+                          ConstructorBehavior::kThrow,
+                          SideEffectType::kHasNoSideEffect);
+  Local<FunctionTemplate> setter_templ =
+      NewFunctionTemplate(isolate,
+                          setter,
+                          signature,
+                          ConstructorBehavior::kThrow,
+                          SideEffectType::kHasSideEffect);
+  t->PrototypeTemplate()->SetAccessorProperty(
+      string, getter_templ, setter_templ, attributes);
+}
+
+void StreamBase::AddMethod(Isolate* isolate,
                            Local<Signature> signature,
                            enum PropertyAttribute attributes,
                            Local<FunctionTemplate> t,
                            JSMethodFunction* stream_method,
                            Local<String> string) {
-  Isolate* isolate = env->isolate();
   Local<FunctionTemplate> templ =
       NewFunctionTemplate(isolate,
                           stream_method,
@@ -412,19 +532,37 @@ void StreamBase::AddMethod(Environment* env,
 }
 
 void StreamBase::AddMethods(Environment* env, Local<FunctionTemplate> t) {
-  Isolate* isolate = env->isolate();
+  AddMethods(env->isolate_data(), t);
+}
+
+void StreamBase::AddMethods(IsolateData* isolate_data,
+                            Local<FunctionTemplate> t) {
+  Isolate* isolate = isolate_data->isolate();
   HandleScope scope(isolate);
 
   enum PropertyAttribute attributes =
       static_cast<PropertyAttribute>(ReadOnly | DontDelete | DontEnum);
   Local<Signature> sig = Signature::New(isolate, t);
 
-  AddMethod(env, sig, attributes, t, GetFD, env->fd_string());
-  AddMethod(
-      env, sig, attributes, t, GetExternal, env->external_stream_string());
-  AddMethod(env, sig, attributes, t, GetBytesRead, env->bytes_read_string());
-  AddMethod(
-      env, sig, attributes, t, GetBytesWritten, env->bytes_written_string());
+  AddMethod(isolate, sig, attributes, t, GetFD, isolate_data->fd_string());
+  AddMethod(isolate,
+            sig,
+            attributes,
+            t,
+            GetExternal,
+            isolate_data->external_stream_string());
+  AddMethod(isolate,
+            sig,
+            attributes,
+            t,
+            GetBytesRead,
+            isolate_data->bytes_read_string());
+  AddMethod(isolate,
+            sig,
+            attributes,
+            t,
+            GetBytesWritten,
+            isolate_data->bytes_written_string());
   SetProtoMethod(isolate, t, "readStart", JSMethod<&StreamBase::ReadStartJS>);
   SetProtoMethod(isolate, t, "readStop", JSMethod<&StreamBase::ReadStopJS>);
   SetProtoMethod(isolate, t, "shutdown", JSMethod<&StreamBase::Shutdown>);
@@ -446,11 +584,14 @@ void StreamBase::AddMethods(Environment* env, Local<FunctionTemplate> t) {
                  JSMethod<&StreamBase::WriteString<LATIN1>>);
   t->PrototypeTemplate()->Set(FIXED_ONE_BYTE_STRING(isolate, "isStreamBase"),
                               True(isolate));
-  t->PrototypeTemplate()->SetAccessor(
-      FIXED_ONE_BYTE_STRING(isolate, "onread"),
-      BaseObject::InternalFieldGet<StreamBase::kOnReadFunctionField>,
-      BaseObject::InternalFieldSet<StreamBase::kOnReadFunctionField,
-                                   &Value::IsFunction>);
+  AddAccessor(isolate,
+              sig,
+              static_cast<PropertyAttribute>(DontDelete | DontEnum),
+              t,
+              BaseObject::InternalFieldGet<StreamBase::kOnReadFunctionField>,
+              BaseObject::InternalFieldSet<StreamBase::kOnReadFunctionField,
+                                           &Value::IsFunction>,
+              FIXED_ONE_BYTE_STRING(isolate, "onread"));
 }
 
 void StreamBase::RegisterExternalReferences(
@@ -517,7 +658,7 @@ void StreamBase::GetExternal(const FunctionCallbackInfo<Value>& args) {
 
 template <int (StreamBase::*Method)(const FunctionCallbackInfo<Value>& args)>
 void StreamBase::JSMethod(const FunctionCallbackInfo<Value>& args) {
-  StreamBase* wrap = StreamBase::FromObject(args.Holder().As<Object>());
+  StreamBase* wrap = StreamBase::FromObject(args.This().As<Object>());
   if (wrap == nullptr) return;
 
   if (!wrap->IsAlive()) return args.GetReturnValue().Set(UV_EINVAL);
@@ -564,7 +705,13 @@ void EmitToJSStreamListener::OnStreamRead(ssize_t nread, const uv_buf_t& buf_) {
   }
 
   CHECK_LE(static_cast<size_t>(nread), bs->ByteLength());
-  bs = BackingStore::Reallocate(isolate, std::move(bs), nread);
+  if (static_cast<size_t>(nread) != bs->ByteLength()) {
+    std::unique_ptr<BackingStore> old_bs = std::move(bs);
+    bs = ArrayBuffer::NewBackingStore(isolate, nread);
+    memcpy(static_cast<char*>(bs->Data()),
+           static_cast<char*>(old_bs->Data()),
+           nread);
+  }
 
   stream->CallJSOnreadMethod(nread, ArrayBuffer::New(isolate, std::move(bs)));
 }
@@ -583,9 +730,10 @@ void CustomBufferJSListener::OnStreamRead(ssize_t nread, const uv_buf_t& buf) {
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
 
-  // To deal with the case where POLLHUP is received and UV_EOF is returned, as
-  // libuv returns an empty buffer (on unices only).
-  if (nread == UV_EOF && buf.base == nullptr) {
+  // In the case that there's an error and buf is null, return immediately.
+  // This can happen on unices when POLLHUP is received and UV_EOF is returned
+  // or when getting an error while performing a UV_HANDLE_ZERO_READ on Windows.
+  if (buf.base == nullptr && nread < 0) {
     stream->CallJSOnreadMethod(nread, Local<ArrayBuffer>());
     return;
   }
@@ -608,7 +756,7 @@ void ReportWritesToJSStreamListener::OnStreamAfterReqFinished(
     StreamReq* req_wrap, int status) {
   StreamBase* stream = static_cast<StreamBase*>(stream_);
   Environment* env = stream->stream_env();
-  if (env->is_stopping()) return;
+  if (!env->can_call_into_js()) return;
   AsyncWrap* async_wrap = req_wrap->GetAsyncWrap();
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
@@ -679,6 +827,30 @@ StreamResource::~StreamResource() {
   }
 }
 
+void StreamResource::RemoveStreamListener(StreamListener* listener) {
+  CHECK_NOT_NULL(listener);
+
+  StreamListener* previous;
+  StreamListener* current;
+
+  // Remove from the linked list.
+  // No loop condition because we want a crash if listener is not found.
+  for (current = listener_, previous = nullptr;;
+       previous = current, current = current->previous_listener_) {
+    CHECK_NOT_NULL(current);
+    if (current == listener) {
+      if (previous != nullptr)
+        previous->previous_listener_ = current->previous_listener_;
+      else
+        listener_ = listener->previous_listener_;
+      break;
+    }
+  }
+
+  listener->stream_ = nullptr;
+  listener->previous_listener_ = nullptr;
+}
+
 ShutdownWrap* StreamBase::CreateShutdownWrap(
     Local<Object> object) {
   auto* wrap = new SimpleShutdownWrap<AsyncWrap>(this, object);
@@ -691,6 +863,23 @@ WriteWrap* StreamBase::CreateWriteWrap(
   auto* wrap = new SimpleWriteWrap<AsyncWrap>(this, object);
   wrap->MakeWeak();
   return wrap;
+}
+
+void StreamReq::Done(int status, const char* error_str) {
+  AsyncWrap* async_wrap = GetAsyncWrap();
+  Environment* env = async_wrap->env();
+  if (error_str != nullptr) {
+    v8::HandleScope handle_scope(env->isolate());
+    if (async_wrap->object()
+            ->Set(env->context(),
+                  env->error_string(),
+                  OneByteString(env->isolate(), error_str))
+            .IsNothing()) {
+      return;
+    }
+  }
+
+  OnDone(status);
 }
 
 }  // namespace node

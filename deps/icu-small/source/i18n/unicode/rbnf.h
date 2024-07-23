@@ -54,10 +54,30 @@ class RuleBasedCollator;
  * @stable ICU 2.2
  */
 enum URBNFRuleSetTag {
+    /**
+     * Requests predefined ruleset for spelling out numeric values in words.
+     * @stable ICU 2.2
+     */
     URBNF_SPELLOUT,
+    /**
+     * Requests predefined ruleset for the ordinal form of a number.
+     * @stable ICU 2.2
+     */
     URBNF_ORDINAL,
+#ifndef U_HIDE_DEPRECATED_API
+    /**
+     * Requests predefined ruleset for formatting a value as a duration in hours, minutes, and seconds.
+     * @deprecated ICU 74 Use MeasureFormat instead.
+     */
     URBNF_DURATION,
-    URBNF_NUMBERING_SYSTEM,
+#endif // U_HIDE_DERECATED_API
+    /**
+     * Requests predefined ruleset for various non-place-value numbering systems.
+     * WARNING: The same resource contains rule sets for a variety of different numbering systems.
+     * You need to call setDefaultRuleSet() on the formatter to choose the actual numbering system.
+     * @stable ICU 2.2
+     */
+    URBNF_NUMBERING_SYSTEM = 3,
 #ifndef U_HIDE_DEPRECATED_API
     /**
      * One more than the highest normal URBNFRuleSetTag value.
@@ -416,7 +436,16 @@ enum URBNFRuleSetTag {
  *   <tr>
  *     <td>&lt;&lt;</td>
  *     <td>in normal rule</td>
- *     <td>Divide the number by the rule's divisor and format the quotient</td>
+ *     <td>Divide the number by the rule's divisor, perform floor() on the quotient,
+ *         and format the resulting value.<br>
+ *         If there is a DecimalFormat pattern between the &lt; characters and the
+ *         rule does NOT also contain a &gt;&gt; substitution, we DON'T perform
+ *         floor() on the quotient-- the quotient is passed through to the DecimalFormat
+ *         intact.  That is, for the value 1,900:<br>
+ *         - "1/1000: &lt;&lt; thousand;" will produce "one thousand"<br>
+ *         - "1/1000: &lt;0&lt; thousand;" will produce "2 thousand" (NOT "1 thousand")<br>
+ *         - "1/1000: &lt;0&lt; seconds &gt;0&gt; milliseconds;" will produce "1 second 900 milliseconds"
+ *     </td>
  *   </tr>
  *   <tr>
  *     <td></td>
@@ -591,7 +620,7 @@ public:
      * rule sets.  Each of these is one longer than the initial array,
      * with the first String being the ULocale ID, and the remaining
      * Strings being the localizations of the rule set names, in the
-     * same order as the initial array.  Arrays are NULL-terminated.
+     * same order as the initial array.  Arrays are nullptr-terminated.
      * @param rules A description of the formatter's desired behavior.
      * See the class documentation for a complete explanation of the description
      * syntax.
@@ -635,7 +664,7 @@ public:
      * rule sets.  Each of these is one longer than the initial array,
      * with the first String being the ULocale ID, and the remaining
      * Strings being the localizations of the rule set names, in the
-     * same order as the initial array.  Arrays are NULL-terminated.
+     * same order as the initial array.  Arrays are nullptr-terminated.
      * @param rules A description of the formatter's desired behavior.
      * See the class documentation for a complete explanation of the description
      * syntax.
@@ -662,6 +691,9 @@ public:
    * URBNF_DURATION, which formats a duration in seconds as hours, minutes, and seconds always rounding down,
    * and URBNF_NUMBERING_SYSTEM, which is used to invoke rules for alternate numbering
    * systems such as the Hebrew numbering system, or for Roman Numerals, etc.
+   * NOTE: If you use URBNF_NUMBERING_SYSTEM, you must also call setDefaultRuleSet() to
+   * specify the exact numbering system you want to use.  If you want the default numbering system
+   * for the locale, call NumberFormat::createInstance() instead of creating a RuleBasedNumberFormat directly.
    * @param locale The locale for the formatter.
    * @param status The status indicating whether the constructor succeeded.
    * @stable ICU 2.0
@@ -741,7 +773,7 @@ public:
    * @return the number of locales for which we have localized rule set display names.
    * @stable ICU 3.2
    */
-  virtual int32_t getNumberOfRuleSetDisplayNameLocales(void) const;
+  virtual int32_t getNumberOfRuleSetDisplayNameLocales() const;
 
   /**
    * Return the index'th display name locale.
@@ -955,7 +987,7 @@ public:
    * @see #setLenient
    * @stable ICU 2.0
    */
-  virtual inline UBool isLenient(void) const override;
+  virtual inline UBool isLenient() const override;
 
 #endif
 
@@ -994,7 +1026,7 @@ public:
      * @return A rounding mode
      * @stable ICU 60
      */
-    virtual ERoundingMode getRoundingMode(void) const override;
+    virtual ERoundingMode getRoundingMode() const override;
 
     /**
      * Set the rounding mode.
@@ -1009,14 +1041,14 @@ public:
      *
      * @stable ICU 2.8
      */
-    static UClassID U_EXPORT2 getStaticClassID(void);
+    static UClassID U_EXPORT2 getStaticClassID();
 
     /**
      * ICU "poor man's RTTI", returns a UClassID for the actual class.
      *
      * @stable ICU 2.8
      */
-    virtual UClassID getDynamicClassID(void) const override;
+    virtual UClassID getDynamicClassID() const override;
 
     /**
      * Sets the decimal format symbols, which is generally not changed
@@ -1040,9 +1072,9 @@ public:
     virtual void setDecimalFormatSymbols(const DecimalFormatSymbols& symbols);
 
 private:
-    RuleBasedNumberFormat(); // default constructor not implemented
+    RuleBasedNumberFormat() = delete; // default constructor not implemented
 
-    // this will ref the localizations if they are not NULL
+    // this will ref the localizations if they are not nullptr
     // caller must deref to get adoption
     RuleBasedNumberFormat(const UnicodeString& description, LocalizationInfo* localizations,
               const Locale& locale, UParseError& perror, UErrorCode& status);
@@ -1099,7 +1131,7 @@ private:
 #if !UCONFIG_NO_COLLATION
 
 inline UBool
-RuleBasedNumberFormat::isLenient(void) const {
+RuleBasedNumberFormat::isLenient() const {
     return lenient;
 }
 

@@ -36,13 +36,7 @@ exec(cmdline, function(err, stdout, stderr) {
     console.log(stdout);
     console.log(stderr);
     assert(false, 'this test should fail');
-    return;
   }
 
-  if (err.code !== 134 && err.signal !== 'SIGABRT') {
-    console.log(stdout);
-    console.log(stderr);
-    console.log(err);
-    assert(false, err);
-  }
+  assert(common.nodeProcessAborted(err.code, err.signal));
 });

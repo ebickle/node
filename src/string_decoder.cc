@@ -31,11 +31,11 @@ MaybeLocal<String> MakeString(Isolate* isolate,
   Local<Value> error;
   MaybeLocal<Value> ret;
   if (encoding == UTF8) {
-    MaybeLocal<String> utf8_string = String::NewFromUtf8(
-        isolate,
-        data,
-        v8::NewStringType::kNormal,
-        length);
+    MaybeLocal<String> utf8_string;
+    if (length <= static_cast<size_t>(v8::String::kMaxLength)) {
+      utf8_string = String::NewFromUtf8(
+          isolate, data, v8::NewStringType::kNormal, length);
+    }
     if (utf8_string.IsEmpty()) {
       isolate->ThrowException(node::ERR_STRING_TOO_LONG(isolate));
       return MaybeLocal<String>();
@@ -342,7 +342,7 @@ void RegisterStringDecoderExternalReferences(
 
 }  // namespace node
 
-NODE_MODULE_CONTEXT_AWARE_INTERNAL(string_decoder,
-                                   node::InitializeStringDecoder)
-NODE_MODULE_EXTERNAL_REFERENCE(string_decoder,
-                               node::RegisterStringDecoderExternalReferences)
+NODE_BINDING_CONTEXT_AWARE_INTERNAL(string_decoder,
+                                    node::InitializeStringDecoder)
+NODE_BINDING_EXTERNAL_REFERENCE(string_decoder,
+                                node::RegisterStringDecoderExternalReferences)

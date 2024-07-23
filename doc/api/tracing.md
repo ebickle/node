@@ -22,6 +22,10 @@ The available categories are:
 * `node.bootstrap`: Enables capture of Node.js bootstrap milestones.
 * `node.console`: Enables capture of `console.time()` and `console.count()`
   output.
+* `node.threadpoolwork.sync`: Enables capture of trace data for threadpool
+  synchronous operations, such as `blob`, `zlib`, `crypto` and `node_api`.
+* `node.threadpoolwork.async`: Enables capture of trace data for threadpool
+  asynchronous operations, such as `blob`, `zlib`, `crypto` and `node_api`.
 * `node.dns.native`: Enables capture of trace data for DNS queries.
 * `node.net.native`: Enables capture of trace data for network.
 * `node.environment`: Enables capture of Node.js Environment milestones.
@@ -42,6 +46,7 @@ The available categories are:
   `runInNewContext()`, `runInContext()`, and `runInThisContext()` methods.
 * `v8`: The [V8][] events are GC, compiling, and execution related.
 * `node.http`: Enables capture of trace data for http request / response.
+* `node.module_timer`: Enables capture of trace data for CJS Module loading.
 
 By default the `node`, `node.async_hooks`, and `v8` categories are enabled.
 

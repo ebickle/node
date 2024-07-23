@@ -97,6 +97,10 @@ def GuessArchitecture():
     return 'ppc'
   elif id == 's390x':
     return 's390'
+  elif id == 'riscv64':
+    return 'riscv64'
+  elif id == 'loong64':
+    return 'loong64'
   else:
     id = platform.processor()
     if id == 'powerpc':

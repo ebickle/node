@@ -45,6 +45,13 @@ static void PlatformWorkerThread(void* data) {
   }
 }
 
+static int GetActualThreadPoolSize(int thread_pool_size) {
+  if (thread_pool_size < 1) {
+    thread_pool_size = uv_available_parallelism() - 1;
+  }
+  return std::max(thread_pool_size, 1);
+}
+
 }  // namespace
 
 class WorkerThreadsTaskRunner::DelayedTaskScheduler {
@@ -340,6 +347,8 @@ NodePlatform::NodePlatform(int thread_pool_size,
   // current v8::Platform instance.
   SetTracingController(tracing_controller_);
   DCHECK_EQ(GetTracingController(), tracing_controller_);
+
+  thread_pool_size = GetActualThreadPoolSize(thread_pool_size);
   worker_thread_task_runner_ =
       std::make_shared<WorkerThreadsTaskRunner>(thread_pool_size);
 }
@@ -406,7 +415,7 @@ int NodePlatform::NumberOfWorkerThreads() {
 }
 
 void PerIsolatePlatformData::RunForegroundTask(std::unique_ptr<Task> task) {
-  if (isolate_->IsExecutionTerminating()) return task->Run();
+  if (isolate_->IsExecutionTerminating()) return;
   DebugSealHandleScope scope(isolate_);
   Environment* env = Environment::GetCurrent(isolate_);
   if (env != nullptr) {
@@ -415,6 +424,11 @@ void PerIsolatePlatformData::RunForegroundTask(std::unique_ptr<Task> task) {
                                    InternalCallbackScope::kNoFlags);
     task->Run();
   } else {
+    // When the Environment was freed, the tasks of the Isolate should also be
+    // canceled by `NodePlatform::UnregisterIsolate`. However, if the embedder
+    // request to run the foreground task after the Environment was freed, run
+    // the task without InternalCallbackScope.
+
     // The task is moved out of InternalCallbackScope if env is not available.
     // This is a required else block, and should not be removed.
     // See comment: https://github.com/nodejs/node/pull/34688#pullrequestreview-463867489
@@ -487,16 +501,21 @@ bool PerIsolatePlatformData::FlushForegroundTasksInternal() {
   return did_work;
 }
 
-void NodePlatform::CallOnWorkerThread(std::unique_ptr<Task> task) {
+void NodePlatform::PostTaskOnWorkerThreadImpl(
+    v8::TaskPriority priority,
+    std::unique_ptr<v8::Task> task,
+    const v8::SourceLocation& location) {
   worker_thread_task_runner_->PostTask(std::move(task));
 }
 
-void NodePlatform::CallDelayedOnWorkerThread(std::unique_ptr<Task> task,
-                                             double delay_in_seconds) {
+void NodePlatform::PostDelayedTaskOnWorkerThreadImpl(
+    v8::TaskPriority priority,
+    std::unique_ptr<v8::Task> task,
+    double delay_in_seconds,
+    const v8::SourceLocation& location) {
   worker_thread_task_runner_->PostDelayedTask(std::move(task),
                                               delay_in_seconds);
 }
-
 
 IsolatePlatformDelegate* NodePlatform::ForIsolate(Isolate* isolate) {
   Mutex::ScopedLock lock(per_isolate_mutex_);
@@ -519,8 +538,10 @@ bool NodePlatform::FlushForegroundTasks(Isolate* isolate) {
   return per_isolate->FlushForegroundTasksInternal();
 }
 
-std::unique_ptr<v8::JobHandle> NodePlatform::CreateJob(
-    v8::TaskPriority priority, std::unique_ptr<v8::JobTask> job_task) {
+std::unique_ptr<v8::JobHandle> NodePlatform::CreateJobImpl(
+    v8::TaskPriority priority,
+    std::unique_ptr<v8::JobTask> job_task,
+    const v8::SourceLocation& location) {
   return v8::platform::NewDefaultJobHandle(
       this, priority, std::move(job_task), NumberOfWorkerThreads());
 }
@@ -551,7 +572,7 @@ v8::TracingController* NodePlatform::GetTracingController() {
 Platform::StackTracePrinter NodePlatform::GetStackTracePrinter() {
   return []() {
     fprintf(stderr, "\n");
-    DumpBacktrace(stderr);
+    DumpNativeBacktrace(stderr);
     fflush(stderr);
   };
 }

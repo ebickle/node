@@ -57,6 +57,10 @@ DEFINE_OPERATORS_FOR_FLAGS(RegExpFlags)
 REGEXP_FLAG_LIST(V)
 #undef V
 
+constexpr bool IsEitherUnicode(RegExpFlags f) {
+  return IsUnicode(f) || IsUnicodeSets(f);
+}
+
 // clang-format off
 #define V(Lower, Camel, LowerCamel, Char, Bit) \
   c == Char ? RegExpFlag::k##Camel :
@@ -65,6 +69,8 @@ constexpr base::Optional<RegExpFlag> TryRegExpFlagFromChar(char c) {
 }
 #undef V
 // clang-format on
+
+std::ostream& operator<<(std::ostream& os, RegExpFlags flags);
 
 }  // namespace internal
 }  // namespace v8

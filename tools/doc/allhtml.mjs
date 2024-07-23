@@ -27,7 +27,7 @@ for (const link of toc.match(/<a.*?>/g)) {
   const data = fs.readFileSync(new URL(`./${href}`, source), 'utf8');
 
   // Split the doc.
-  const match = /(<\/ul>\s*)?<\/\w+>\s*<\w+ id="apicontent">/.exec(data);
+  const match = /(<\/ul>\s*)?<\/\w+>\s*<\w+ role="main" id="apicontent">/.exec(data);
 
   // Get module name
   const moduleName = href.replace(/\.html$/, '');
@@ -89,15 +89,15 @@ all = all.slice(0, tocStart.index + tocStart[0].length) +
   all.slice(tocStart.index + tocStart[0].length);
 
 // Replace apicontent with the concatenated set of apicontents from each source.
-const apiStart = /<\w+ id="apicontent">\s*/.exec(all);
+const apiStart = /<\w+ role="main" id="apicontent">\s*/.exec(all);
 const apiEnd = all.lastIndexOf('<!-- API END -->');
 all = all.slice(0, apiStart.index + apiStart[0].length)
     .replace(
       '\n</head>',
       buildCSSForFlavoredJS(new Set(Array.from(
         apicontent.matchAll(/(?<=<pre class="with-)\d+(?=-chars">)/g),
-        (x) => Number(x[0])
-      ))) + '\n</head>'
+        (x) => Number(x[0]),
+      ))) + '\n</head>',
     ) +
   apicontent +
   all.slice(apiEnd);

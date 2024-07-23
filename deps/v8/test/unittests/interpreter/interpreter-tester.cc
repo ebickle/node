@@ -25,7 +25,7 @@ InterpreterTester::InterpreterTester(
       source_(source),
       bytecode_(bytecode),
       feedback_metadata_(feedback_metadata) {
-  i::FLAG_always_turbofan = false;
+  i::v8_flags.always_turbofan = false;
 }
 
 InterpreterTester::InterpreterTester(
@@ -45,10 +45,9 @@ Local<Message> InterpreterTester::CheckThrowsReturnMessage() {
   TryCatch try_catch(reinterpret_cast<v8::Isolate*>(isolate_));
   auto callable = GetCallable<>();
   MaybeHandle<Object> no_result = callable();
-  CHECK(isolate_->has_pending_exception());
+  CHECK(isolate_->has_exception());
   CHECK(try_catch.HasCaught());
   CHECK(no_result.is_null());
-  isolate_->OptionalRescheduleException(true);
   CHECK(!try_catch.Message().IsEmpty());
   return try_catch.Message();
 }

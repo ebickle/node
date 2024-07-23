@@ -189,8 +189,8 @@ The following legacy character encodings are also supported:
   better choice when encoding or decoding ASCII-only text. It is only provided
   for legacy compatibility.
 
-* `'binary'`: Alias for `'latin1'`. See [binary strings][] for more background
-  on this topic. The name of this encoding can be very misleading, as all of the
+* `'binary'`: Alias for `'latin1'`.
+  The name of this encoding can be very misleading, as all of the
   encodings listed here convert between strings and binary data. For converting
   between strings and `Buffer`s, typically `'utf8'` is the right choice.
 
@@ -581,7 +581,7 @@ contained by the `Blob` is copied only when the `arrayBuffer()` or `text()`
 methods are called.
 
 ```mjs
-import { Blob, Buffer } from 'node:buffer';
+import { Blob } from 'node:buffer';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const blob = new Blob(['hello there']);
@@ -608,7 +608,7 @@ blob.text().then(console.log);
 ```
 
 ```cjs
-const { Blob, Buffer } = require('node:buffer');
+const { Blob } = require('node:buffer');
 const { setTimeout: delay } = require('node:timers/promises');
 
 const blob = new Blob(['hello there']);
@@ -644,6 +644,10 @@ It can be constructed in a variety of ways.
 <!-- YAML
 added: v5.10.0
 changes:
+  - version: v20.0.0
+    pr-url: https://github.com/nodejs/node/pull/45796
+    description: Throw ERR_INVALID_ARG_TYPE or ERR_OUT_OF_RANGE instead of
+                 ERR_INVALID_ARG_VALUE for invalid input arguments.
   - version: v15.0.0
     pr-url: https://github.com/nodejs/node/pull/34682
     description: Throw ERR_INVALID_ARG_VALUE instead of ERR_INVALID_OPT_VALUE
@@ -690,7 +694,7 @@ console.log(buf);
 ```
 
 If `size` is larger than
-[`buffer.constants.MAX_LENGTH`][] or smaller than 0, [`ERR_INVALID_ARG_VALUE`][]
+[`buffer.constants.MAX_LENGTH`][] or smaller than 0, [`ERR_OUT_OF_RANGE`][]
 is thrown.
 
 If `fill` is specified, the allocated `Buffer` will be initialized by calling
@@ -747,6 +751,10 @@ A `TypeError` will be thrown if `size` is not a number.
 <!-- YAML
 added: v5.10.0
 changes:
+  - version: v20.0.0
+    pr-url: https://github.com/nodejs/node/pull/45796
+    description: Throw ERR_INVALID_ARG_TYPE or ERR_OUT_OF_RANGE instead of
+                 ERR_INVALID_ARG_VALUE for invalid input arguments.
   - version: v15.0.0
     pr-url: https://github.com/nodejs/node/pull/34682
     description: Throw ERR_INVALID_ARG_VALUE instead of ERR_INVALID_OPT_VALUE
@@ -759,7 +767,7 @@ changes:
 * `size` {integer} The desired length of the new `Buffer`.
 
 Allocates a new `Buffer` of `size` bytes. If `size` is larger than
-[`buffer.constants.MAX_LENGTH`][] or smaller than 0, [`ERR_INVALID_ARG_VALUE`][]
+[`buffer.constants.MAX_LENGTH`][] or smaller than 0, [`ERR_OUT_OF_RANGE`][]
 is thrown.
 
 The underlying memory for `Buffer` instances created in this way is _not
@@ -799,10 +807,9 @@ A `TypeError` will be thrown if `size` is not a number.
 
 The `Buffer` module pre-allocates an internal `Buffer` instance of
 size [`Buffer.poolSize`][] that is used as a pool for the fast allocation of new
-`Buffer` instances created using [`Buffer.allocUnsafe()`][],
-[`Buffer.from(array)`][], [`Buffer.concat()`][], and the deprecated
-`new Buffer(size)` constructor only when `size` is less than or equal
-to `Buffer.poolSize >> 1` (floor of [`Buffer.poolSize`][] divided by two).
+`Buffer` instances created using [`Buffer.allocUnsafe()`][], [`Buffer.from(array)`][],
+[`Buffer.from(string)`][], and [`Buffer.concat()`][] only when `size` is less than
+`Buffer.poolSize >>> 1` (floor of [`Buffer.poolSize`][] divided by two).
 
 Use of this pre-allocated internal memory pool is a key difference between
 calling `Buffer.alloc(size, fill)` vs. `Buffer.allocUnsafe(size).fill(fill)`.
@@ -817,6 +824,10 @@ additional performance that [`Buffer.allocUnsafe()`][] provides.
 <!-- YAML
 added: v5.12.0
 changes:
+  - version: v20.0.0
+    pr-url: https://github.com/nodejs/node/pull/45796
+    description: Throw ERR_INVALID_ARG_TYPE or ERR_OUT_OF_RANGE instead of
+                 ERR_INVALID_ARG_VALUE for invalid input arguments.
   - version: v15.0.0
     pr-url: https://github.com/nodejs/node/pull/34682
     description: Throw ERR_INVALID_ARG_VALUE instead of ERR_INVALID_OPT_VALUE
@@ -826,7 +837,7 @@ changes:
 * `size` {integer} The desired length of the new `Buffer`.
 
 Allocates a new `Buffer` of `size` bytes. If `size` is larger than
-[`buffer.constants.MAX_LENGTH`][] or smaller than 0, [`ERR_INVALID_ARG_VALUE`][]
+[`buffer.constants.MAX_LENGTH`][] or smaller than 0, [`ERR_OUT_OF_RANGE`][]
 is thrown. A zero-length `Buffer` is created if `size` is 0.
 
 The underlying memory for `Buffer` instances created in this way is _not
@@ -835,11 +846,11 @@ _may contain sensitive data_. Use [`buf.fill(0)`][`buf.fill()`] to initialize
 such `Buffer` instances with zeroes.
 
 When using [`Buffer.allocUnsafe()`][] to allocate new `Buffer` instances,
-allocations under 4 KiB are sliced from a single pre-allocated `Buffer`. This
-allows applications to avoid the garbage collection overhead of creating many
-individually allocated `Buffer` instances. This approach improves both
-performance and memory usage by eliminating the need to track and clean up as
-many individual `ArrayBuffer` objects.
+allocations less than `Buffer.poolSize >>> 1` (4KiB when default poolSize is used) are sliced
+from a single pre-allocated `Buffer`. This allows applications to avoid the
+garbage collection overhead of creating many individually allocated `Buffer`
+instances. This approach improves both performance and memory usage by
+eliminating the need to track and clean up as many individual `ArrayBuffer` objects.
 
 However, in the case where a developer may need to retain a small chunk of
 memory from a pool for an indeterminate amount of time, it may be appropriate
@@ -1058,6 +1069,30 @@ console.log(bufA.length);
 `Buffer.concat()` may also use the internal `Buffer` pool like
 [`Buffer.allocUnsafe()`][] does.
 
+### Static method: `Buffer.copyBytesFrom(view[, offset[, length]])`
+
+<!-- YAML
+added:
+ - v19.8.0
+ - v18.16.0
+-->
+
+* `view` {TypedArray} The {TypedArray} to copy.
+* `offset` {integer} The starting offset within `view`. **Default:**: `0`.
+* `length` {integer} The number of elements from `view` to copy.
+  **Default:** `view.length - offset`.
+
+Copies the underlying memory of `view` into a new `Buffer`.
+
+```js
+const u16 = new Uint16Array([0, 0xffff]);
+const buf = Buffer.copyBytesFrom(u16, 1, 1);
+u16[1] = 0;
+console.log(buf.length); // 2
+console.log(buf[0]); // 255
+console.log(buf[1]); // 255
+```
+
 ### Static method: `Buffer.from(array)`
 
 <!-- YAML
@@ -1082,6 +1117,12 @@ const { Buffer } = require('node:buffer');
 // Creates a new Buffer containing the UTF-8 bytes of the string 'buffer'.
 const buf = Buffer.from([0x62, 0x75, 0x66, 0x66, 0x65, 0x72]);
 ```
+
+If `array` is an `Array`-like object (that is, one with a `length` property of
+type `number`), it is treated as if it is an array, unless it is a `Buffer` or
+a `Uint8Array`. This means all other `TypedArray` variants get treated as an
+`Array`. To create a `Buffer` from the bytes backing a `TypedArray`, use
+[`Buffer.copyBytesFrom()`][].
 
 A `TypeError` will be thrown if `array` is not an `Array` or another type
 appropriate for `Buffer.from()` variants.
@@ -1348,6 +1389,9 @@ console.log(buf1.toString('latin1'));
 
 A `TypeError` will be thrown if `string` is not a string or another type
 appropriate for `Buffer.from()` variants.
+
+[`Buffer.from(string)`][] may also use the internal `Buffer` pool like
+[`Buffer.allocUnsafe()`][] does.
 
 ### Static method: `Buffer.isBuffer(obj)`
 
@@ -1884,6 +1928,7 @@ changes:
 -->
 
 * `value` {string|Buffer|Uint8Array|integer} The value with which to fill `buf`.
+  Empty value (string, Uint8Array, Buffer) is coerced to `0`.
 * `offset` {integer} Number of bytes to skip before starting to fill `buf`.
   **Default:** `0`.
 * `end` {integer} Where to stop filling `buf` (not inclusive). **Default:**
@@ -1904,6 +1949,12 @@ const b = Buffer.allocUnsafe(50).fill('h');
 
 console.log(b.toString());
 // Prints: hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
+
+// Fill a buffer with empty string
+const c = Buffer.allocUnsafe(5).fill('');
+
+console.log(c.fill(''));
+// Prints: <Buffer 00 00 00 00 00>
 ```
 
 ```cjs
@@ -1915,6 +1966,12 @@ const b = Buffer.allocUnsafe(50).fill('h');
 
 console.log(b.toString());
 // Prints: hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
+
+// Fill a buffer with empty string
+const c = Buffer.allocUnsafe(5).fill('');
+
+console.log(c.fill(''));
+// Prints: <Buffer 00 00 00 00 00>
 ```
 
 `value` is coerced to a `uint32` value if it is not a string, `Buffer`, or
@@ -2170,7 +2227,7 @@ added: v1.1.0
 
 * Returns: {Iterator}
 
-Creates and returns an [iterator][] of `buf` keys (indices).
+Creates and returns an [iterator][] of `buf` keys (indexes).
 
 ```mjs
 import { Buffer } from 'node:buffer';
@@ -3289,7 +3346,7 @@ added: v3.0.0
 * Returns: {Buffer}
 
 Returns a new `Buffer` that references the same memory as the original, but
-offset and cropped by the `start` and `end` indices.
+offset and cropped by the `start` and `end` indexes.
 
 Specifying `end` greater than [`buf.length`][] will return the same result as
 that of `end` equal to [`buf.length`][].
@@ -3416,7 +3473,7 @@ changes:
 > Stability: 0 - Deprecated: Use [`buf.subarray`][] instead.
 
 Returns a new `Buffer` that references the same memory as the original, but
-offset and cropped by the `start` and `end` indices.
+offset and cropped by the `start` and `end` indexes.
 
 This method is not compatible with the `Uint8Array.prototype.slice()`,
 which is a superclass of `Buffer`. To copy the slice, use
@@ -5013,6 +5070,66 @@ changes:
 
 See [`Buffer.from(string[, encoding])`][`Buffer.from(string)`].
 
+## Class: `File`
+
+<!-- YAML
+added:
+  - v19.2.0
+  - v18.13.0
+changes:
+  - version: v20.0.0
+    pr-url: https://github.com/nodejs/node/pull/47153
+    description: No longer experimental.
+-->
+
+* Extends: {Blob}
+
+A [`File`][] provides information about files.
+
+### `new buffer.File(sources, fileName[, options])`
+
+<!-- YAML
+added:
+  - v19.2.0
+  - v18.13.0
+-->
+
+* `sources` {string\[]|ArrayBuffer\[]|TypedArray\[]|DataView\[]|Blob\[]|File\[]}
+  An array of string, {ArrayBuffer}, {TypedArray}, {DataView}, {File}, or {Blob}
+  objects, or any mix of such objects, that will be stored within the `File`.
+* `fileName` {string} The name of the file.
+* `options` {Object}
+  * `endings` {string} One of either `'transparent'` or `'native'`. When set
+    to `'native'`, line endings in string source parts will be converted to
+    the platform native line-ending as specified by `require('node:os').EOL`.
+  * `type` {string} The File content-type.
+  * `lastModified` {number} The last modified date of the file.
+    **Default:** `Date.now()`.
+
+### `file.name`
+
+<!-- YAML
+added:
+  - v19.2.0
+  - v18.13.0
+-->
+
+* Type: {string}
+
+The name of the `File`.
+
+### `file.lastModified`
+
+<!-- YAML
+added:
+  - v19.2.0
+  - v18.13.0
+-->
+
+* Type: {number}
+
+The last modified date of the `File`.
+
 ## `node:buffer` module APIs
 
 While, the `Buffer` object is available as a global, there are additional
@@ -5066,6 +5183,38 @@ binary data and predate the introduction of typed arrays in JavaScript.
 For code running using Node.js APIs, converting between base64-encoded strings
 and binary data should be performed using `Buffer.from(str, 'base64')` and
 `buf.toString('base64')`.**
+
+### `buffer.isAscii(input)`
+
+<!-- YAML
+added:
+  - v19.6.0
+  - v18.15.0
+-->
+
+* input {Buffer | ArrayBuffer | TypedArray} The input to validate.
+* Returns: {boolean}
+
+This function returns `true` if `input` contains only valid ASCII-encoded data,
+including the case in which `input` is empty.
+
+Throws if the `input` is a detached array buffer.
+
+### `buffer.isUtf8(input)`
+
+<!-- YAML
+added:
+  - v19.4.0
+  - v18.14.0
+-->
+
+* input {Buffer | ArrayBuffer | TypedArray} The input to validate.
+* Returns: {boolean}
+
+This function returns `true` if `input` contains only valid UTF-8-encoded data,
+including the case in which `input` is empty.
+
+Throws if the `input` is a detached array buffer.
 
 ### `buffer.INSPECT_MAX_BYTES`
 
@@ -5298,10 +5447,10 @@ to one of these new APIs._
   uninitialized, the allocated segment of memory might contain old data that is
   potentially sensitive.
 
-`Buffer` instances returned by [`Buffer.allocUnsafe()`][] and
-[`Buffer.from(array)`][] _may_ be allocated off a shared internal memory pool
-if `size` is less than or equal to half [`Buffer.poolSize`][]. Instances
-returned by [`Buffer.allocUnsafeSlow()`][] _never_ use the shared internal
+`Buffer` instances returned by [`Buffer.allocUnsafe()`][], [`Buffer.from(string)`][],
+[`Buffer.concat()`][] and [`Buffer.from(array)`][] _may_ be allocated off a shared
+internal memory pool if `size` is less than or equal to half [`Buffer.poolSize`][].
+Instances returned by [`Buffer.allocUnsafeSlow()`][] _never_ use the shared internal
 memory pool.
 
 ### The `--zero-fill-buffers` command-line option
@@ -5350,15 +5499,16 @@ introducing security vulnerabilities into an application.
 [`Buffer.allocUnsafe()`]: #static-method-bufferallocunsafesize
 [`Buffer.allocUnsafeSlow()`]: #static-method-bufferallocunsafeslowsize
 [`Buffer.concat()`]: #static-method-bufferconcatlist-totallength
+[`Buffer.copyBytesFrom()`]: #static-method-buffercopybytesfromview-offset-length
 [`Buffer.from(array)`]: #static-method-bufferfromarray
 [`Buffer.from(arrayBuf)`]: #static-method-bufferfromarraybuffer-byteoffset-length
 [`Buffer.from(buffer)`]: #static-method-bufferfrombuffer
 [`Buffer.from(string)`]: #static-method-bufferfromstring-encoding
 [`Buffer.poolSize`]: #class-property-bufferpoolsize
 [`DataView`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView
-[`ERR_INVALID_ARG_VALUE`]: errors.md#err_invalid_arg_value
 [`ERR_INVALID_BUFFER_SIZE`]: errors.md#err_invalid_buffer_size
 [`ERR_OUT_OF_RANGE`]: errors.md#err_out_of_range
+[`File`]: https://developer.mozilla.org/en-US/docs/Web/API/File
 [`JSON.stringify()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify
 [`SharedArrayBuffer`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
 [`String.prototype.indexOf()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/indexOf
@@ -5387,6 +5537,5 @@ introducing security vulnerabilities into an application.
 [`util.inspect()`]: util.md#utilinspectobject-options
 [`v8::TypedArray::kMaxLength`]: https://v8.github.io/api/head/classv8_1_1TypedArray.html#a54a48f4373da0850663c4393d843b9b0
 [base64url]: https://tools.ietf.org/html/rfc4648#section-5
-[binary strings]: https://developer.mozilla.org/en-US/docs/Web/API/DOMString/Binary
 [endianness]: https://en.wikipedia.org/wiki/Endianness
 [iterator]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols

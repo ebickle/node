@@ -46,7 +46,8 @@ class WeakSetsTest : public TestWithHeapInternalsAndContext {
  public:
   Handle<JSWeakSet> AllocateJSWeakSet() {
     Factory* factory = i_isolate()->factory();
-    Handle<Map> map = factory->NewMap(JS_WEAK_SET_TYPE, JSWeakSet::kHeaderSize);
+    Handle<Map> map = factory->NewContextfulMapForCurrentContext(
+        JS_WEAK_SET_TYPE, JSWeakSet::kHeaderSize);
     Handle<JSObject> weakset_obj = factory->NewJSObjectFromMap(map);
     Handle<JSWeakSet> weakset(JSWeakSet::cast(*weakset_obj), i_isolate());
     // Do not leak handles for the hash table, it would make entries strong.
@@ -60,6 +61,7 @@ class WeakSetsTest : public TestWithHeapInternalsAndContext {
   }
 };
 
+namespace {
 static int NumberOfWeakCalls = 0;
 static void WeakPointerCallback(const v8::WeakCallbackInfo<void>& data) {
   std::pair<v8::Persistent<v8::Value>*, int>* p =
@@ -69,9 +71,10 @@ static void WeakPointerCallback(const v8::WeakCallbackInfo<void>& data) {
   NumberOfWeakCalls++;
   p->first->Reset();
 }
+}  // namespace
 
 TEST_F(WeakSetsTest, WeakSet_Weakness) {
-  FLAG_incremental_marking = false;
+  v8_flags.incremental_marking = false;
   Factory* factory = i_isolate()->factory();
   HandleScope scope(i_isolate());
   Handle<JSWeakSet> weakset = AllocateJSWeakSet();
@@ -81,7 +84,8 @@ TEST_F(WeakSetsTest, WeakSet_Weakness) {
   Handle<Object> key;
   {
     HandleScope inner_scope(i_isolate());
-    Handle<Map> map = factory->NewMap(JS_OBJECT_TYPE, JSObject::kHeaderSize);
+    Handle<Map> map = factory->NewContextfulMapForCurrentContext(
+        JS_OBJECT_TYPE, JSObject::kHeaderSize);
     Handle<JSObject> object = factory->NewJSObjectFromMap(map);
     key = global_handles->Create(*object);
   }
@@ -91,17 +95,17 @@ TEST_F(WeakSetsTest, WeakSet_Weakness) {
   {
     HandleScope inner_scope(i_isolate());
     Handle<Smi> smi(Smi::FromInt(23), i_isolate());
-    int32_t hash = key->GetOrCreateHash(i_isolate()).value();
+    int32_t hash = Object::GetOrCreateHash(*key, i_isolate()).value();
     JSWeakCollection::Set(weakset, key, smi, hash);
   }
-  CHECK_EQ(1, EphemeronHashTable::cast(weakset->table()).NumberOfElements());
+  CHECK_EQ(1, EphemeronHashTable::cast(weakset->table())->NumberOfElements());
 
   // Force a full GC.
-  PreciseCollectAllGarbage();
+  InvokeAtomicMajorGC();
   CHECK_EQ(0, NumberOfWeakCalls);
-  CHECK_EQ(1, EphemeronHashTable::cast(weakset->table()).NumberOfElements());
+  CHECK_EQ(1, EphemeronHashTable::cast(weakset->table())->NumberOfElements());
   CHECK_EQ(
-      0, EphemeronHashTable::cast(weakset->table()).NumberOfDeletedElements());
+      0, EphemeronHashTable::cast(weakset->table())->NumberOfDeletedElements());
 
   // Make the global reference to the key weak.
   std::pair<Handle<Object>*, int> handle_and_id(&key, 1234);
@@ -110,11 +114,14 @@ TEST_F(WeakSetsTest, WeakSet_Weakness) {
       &WeakPointerCallback, v8::WeakCallbackType::kParameter);
   CHECK(global_handles->IsWeak(key.location()));
 
-  PreciseCollectAllGarbage();
+  // We need to invoke GC without stack here, otherwise the object may survive.
+  DisableConservativeStackScanningScopeForTesting no_stack_scanning(
+      isolate()->heap());
+  InvokeAtomicMajorGC();
   CHECK_EQ(1, NumberOfWeakCalls);
-  CHECK_EQ(0, EphemeronHashTable::cast(weakset->table()).NumberOfElements());
+  CHECK_EQ(0, EphemeronHashTable::cast(weakset->table())->NumberOfElements());
   CHECK_EQ(
-      1, EphemeronHashTable::cast(weakset->table()).NumberOfDeletedElements());
+      1, EphemeronHashTable::cast(weakset->table())->NumberOfDeletedElements());
 }
 
 TEST_F(WeakSetsTest, WeakSet_Shrinking) {
@@ -123,43 +130,45 @@ TEST_F(WeakSetsTest, WeakSet_Shrinking) {
   Handle<JSWeakSet> weakset = AllocateJSWeakSet();
 
   // Check initial capacity.
-  CHECK_EQ(32, EphemeronHashTable::cast(weakset->table()).Capacity());
+  CHECK_EQ(32, EphemeronHashTable::cast(weakset->table())->Capacity());
 
   // Fill up weak set to trigger capacity change.
   {
     HandleScope inner_scope(i_isolate());
-    Handle<Map> map = factory->NewMap(JS_OBJECT_TYPE, JSObject::kHeaderSize);
+    Handle<Map> map = factory->NewContextfulMapForCurrentContext(
+        JS_OBJECT_TYPE, JSObject::kHeaderSize);
     for (int i = 0; i < 32; i++) {
       Handle<JSObject> object = factory->NewJSObjectFromMap(map);
       Handle<Smi> smi(Smi::FromInt(i), i_isolate());
-      int32_t hash = object->GetOrCreateHash(i_isolate()).value();
+      int32_t hash = Object::GetOrCreateHash(*object, i_isolate()).value();
       JSWeakCollection::Set(weakset, object, smi, hash);
     }
   }
 
   // Check increased capacity.
-  CHECK_EQ(128, EphemeronHashTable::cast(weakset->table()).Capacity());
+  CHECK_EQ(128, EphemeronHashTable::cast(weakset->table())->Capacity());
 
   // Force a full GC.
-  CHECK_EQ(32, EphemeronHashTable::cast(weakset->table()).NumberOfElements());
+  CHECK_EQ(32, EphemeronHashTable::cast(weakset->table())->NumberOfElements());
   CHECK_EQ(
-      0, EphemeronHashTable::cast(weakset->table()).NumberOfDeletedElements());
-  PreciseCollectAllGarbage();
-  CHECK_EQ(0, EphemeronHashTable::cast(weakset->table()).NumberOfElements());
+      0, EphemeronHashTable::cast(weakset->table())->NumberOfDeletedElements());
+  InvokeAtomicMajorGC();
+  CHECK_EQ(0, EphemeronHashTable::cast(weakset->table())->NumberOfElements());
   CHECK_EQ(
-      32, EphemeronHashTable::cast(weakset->table()).NumberOfDeletedElements());
+      32,
+      EphemeronHashTable::cast(weakset->table())->NumberOfDeletedElements());
 
   // Check shrunk capacity.
-  CHECK_EQ(32, EphemeronHashTable::cast(weakset->table()).Capacity());
+  CHECK_EQ(32, EphemeronHashTable::cast(weakset->table())->Capacity());
 }
 
 // Test that weak set values on an evacuation candidate which are not reachable
 // by other paths are correctly recorded in the slots buffer.
 TEST_F(WeakSetsTest, WeakSet_Regress2060a) {
-  if (!i::FLAG_compact) return;
-  if (i::FLAG_enable_third_party_heap) return;
-  FLAG_compact_on_every_full_gc = true;
-  FLAG_stress_concurrent_allocation = false;  // For SimulateFullSpace.
+  if (!i::v8_flags.compact) return;
+  if (i::v8_flags.enable_third_party_heap) return;
+  v8_flags.compact_on_every_full_gc = true;
+  v8_flags.stress_concurrent_allocation = false;  // For SimulateFullSpace.
   Factory* factory = i_isolate()->factory();
   Heap* heap = i_isolate()->heap();
   HandleScope scope(i_isolate());
@@ -169,7 +178,7 @@ TEST_F(WeakSetsTest, WeakSet_Regress2060a) {
   Handle<JSWeakSet> weakset = AllocateJSWeakSet();
 
   // Start second old-space page so that values land on evacuation candidate.
-  Page* first_page = heap->old_space()->first_page();
+  PageMetadata* first_page = heap->old_space()->first_page();
   SimulateFullSpace(heap->old_space());
 
   // Fill up weak set with values on an evacuation candidate.
@@ -179,28 +188,30 @@ TEST_F(WeakSetsTest, WeakSet_Regress2060a) {
       Handle<JSObject> object =
           factory->NewJSObject(function, AllocationType::kOld);
       CHECK(!Heap::InYoungGeneration(*object));
-      CHECK_IMPLIES(!FLAG_enable_third_party_heap,
+      CHECK_IMPLIES(!v8_flags.enable_third_party_heap,
                     !first_page->Contains(object->address()));
-      int32_t hash = key->GetOrCreateHash(i_isolate()).value();
+      int32_t hash = Object::GetOrCreateHash(*key, i_isolate()).value();
       JSWeakCollection::Set(weakset, key, object, hash);
     }
   }
 
   // Force compacting garbage collection.
-  CHECK(FLAG_compact_on_every_full_gc);
-  CollectAllGarbage();
+  CHECK(v8_flags.compact_on_every_full_gc);
+  // We need to invoke GC without stack, otherwise no compaction is performed.
+  DisableConservativeStackScanningScopeForTesting no_stack_scanning(heap);
+  InvokeMajorGC();
 }
 
 // Test that weak set keys on an evacuation candidate which are reachable by
 // other strong paths are correctly recorded in the slots buffer.
 TEST_F(WeakSetsTest, WeakSet_Regress2060b) {
-  if (!i::FLAG_compact) return;
-  if (i::FLAG_enable_third_party_heap) return;
-  FLAG_compact_on_every_full_gc = true;
+  if (!i::v8_flags.compact) return;
+  if (i::v8_flags.enable_third_party_heap) return;
+  v8_flags.compact_on_every_full_gc = true;
 #ifdef VERIFY_HEAP
-  FLAG_verify_heap = true;
+  v8_flags.verify_heap = true;
 #endif
-  FLAG_stress_concurrent_allocation = false;  // For SimulateFullSpace.
+  v8_flags.stress_concurrent_allocation = false;  // For SimulateFullSpace.
 
   Factory* factory = i_isolate()->factory();
   Heap* heap = i_isolate()->heap();
@@ -209,7 +220,7 @@ TEST_F(WeakSetsTest, WeakSet_Regress2060b) {
       factory->NewFunctionForTesting(factory->function_string());
 
   // Start second old-space page so that keys land on evacuation candidate.
-  Page* first_page = heap->old_space()->first_page();
+  PageMetadata* first_page = heap->old_space()->first_page();
   SimulateFullSpace(heap->old_space());
 
   // Fill up weak set with keys on an evacuation candidate.
@@ -217,22 +228,24 @@ TEST_F(WeakSetsTest, WeakSet_Regress2060b) {
   for (int i = 0; i < 32; i++) {
     keys[i] = factory->NewJSObject(function, AllocationType::kOld);
     CHECK(!Heap::InYoungGeneration(*keys[i]));
-    CHECK_IMPLIES(!FLAG_enable_third_party_heap,
+    CHECK_IMPLIES(!v8_flags.enable_third_party_heap,
                   !first_page->Contains(keys[i]->address()));
   }
   Handle<JSWeakSet> weakset = AllocateJSWeakSet();
   for (int i = 0; i < 32; i++) {
     Handle<Smi> smi(Smi::FromInt(i), i_isolate());
-    int32_t hash = keys[i]->GetOrCreateHash(i_isolate()).value();
+    int32_t hash = Object::GetOrCreateHash(*keys[i], i_isolate()).value();
     JSWeakCollection::Set(weakset, keys[i], smi, hash);
   }
 
   // Force compacting garbage collection. The subsequent collections are used
   // to verify that key references were actually updated.
-  CHECK(FLAG_compact_on_every_full_gc);
-  CollectAllGarbage();
-  CollectAllGarbage();
-  CollectAllGarbage();
+  CHECK(v8_flags.compact_on_every_full_gc);
+  // We need to invoke GC without stack, otherwise no compaction is performed.
+  DisableConservativeStackScanningScopeForTesting no_stack_scanning(heap);
+  InvokeMajorGC();
+  InvokeMajorGC();
+  InvokeMajorGC();
 }
 
 }  // namespace test_weaksets

@@ -63,6 +63,18 @@ loop to remain active. If there is no other activity keeping the event loop
 running, the process may exit before the `Immediate` object's callback is
 invoked. Calling `immediate.unref()` multiple times will have no effect.
 
+### `immediate[Symbol.dispose]()`
+
+<!-- YAML
+added:
+ - v20.5.0
+ - v18.18.0
+-->
+
+> Stability: 1 - Experimental
+
+Cancels the immediate. This is similar to calling `clearImmediate()`.
+
 ## Class: `Timeout`
 
 This object is created internally and is returned from [`setTimeout()`][] and
@@ -157,6 +169,18 @@ across [`worker_threads`][] it must first be passed to the correct
 thread. This allows enhanced compatibility with browser
 `setTimeout()` and `setInterval()` implementations.
 
+### `timeout[Symbol.dispose]()`
+
+<!-- YAML
+added:
+ - v20.5.0
+ - v18.18.0
+-->
+
+> Stability: 1 - Experimental
+
+Cancels the timeout.
+
 ## Scheduling timers
 
 A timer in Node.js is an internal construct that calls a given function after
@@ -215,8 +239,8 @@ changes:
 
 Schedules repeated execution of `callback` every `delay` milliseconds.
 
-When `delay` is larger than `2147483647` or less than `1`, the `delay` will be
-set to `1`. Non-integer delays are truncated to an integer.
+When `delay` is larger than `2147483647` or less than `1` or `NaN`, the `delay`
+will be set to `1`. Non-integer delays are truncated to an integer.
 
 If `callback` is not a function, a [`TypeError`][] will be thrown.
 
@@ -248,7 +272,7 @@ Node.js makes no guarantees about the exact timing of when callbacks will fire,
 nor of their ordering. The callback will be called as close as possible to the
 time specified.
 
-When `delay` is larger than `2147483647` or less than `1`, the `delay`
+When `delay` is larger than `2147483647` or less than `1` or `NaN`, the `delay`
 will be set to `1`. Non-integer delays are truncated to an integer.
 
 If `callback` is not a function, a [`TypeError`][] will be thrown.
@@ -278,7 +302,7 @@ setImmediatePromise('foobar', { signal })
   .then(console.log)
   .catch((err) => {
     if (err.name === 'AbortError')
-      console.log('The immediate was aborted');
+      console.error('The immediate was aborted');
   });
 
 ac.abort();
@@ -296,7 +320,7 @@ setTimeoutPromise(1000, 'foobar', { signal })
   .then(console.log)
   .catch((err) => {
     if (err.name === 'AbortError')
-      console.log('The timeout was aborted');
+      console.error('The timeout was aborted');
   });
 
 ac.abort();
@@ -354,7 +378,7 @@ import {
   setTimeout,
   setImmediate,
   setInterval,
-} from 'timers/promises';
+} from 'node:timers/promises';
 ```
 
 ```cjs
@@ -384,7 +408,7 @@ added: v15.0.0
 ```mjs
 import {
   setTimeout,
-} from 'timers/promises';
+} from 'node:timers/promises';
 
 const res = await setTimeout(100, 'result');
 
@@ -418,7 +442,7 @@ added: v15.0.0
 ```mjs
 import {
   setImmediate,
-} from 'timers/promises';
+} from 'node:timers/promises';
 
 const res = await setImmediate('result');
 
@@ -442,6 +466,8 @@ added: v15.9.0
 -->
 
 Returns an async iterator that generates values in an interval of `delay` ms.
+If `ref` is `true`, you need to call `next()` of async iterator explicitly
+or implicitly to keep the event loop alive.
 
 * `delay` {number} The number of milliseconds to wait between iterations.
   **Default:** `1`.
@@ -457,7 +483,7 @@ Returns an async iterator that generates values in an interval of `delay` ms.
 ```mjs
 import {
   setInterval,
-} from 'timers/promises';
+} from 'node:timers/promises';
 
 const interval = 100;
 for await (const startTime of setInterval(interval, Date.now())) {

@@ -17,6 +17,11 @@ assert(PerformanceResourceTiming);
 assert(performance.clearResourceTimings);
 assert(performance.markResourceTiming);
 
+assert.deepStrictEqual(
+  Object.getOwnPropertyDescriptor(PerformanceResourceTiming.prototype, Symbol.toStringTag),
+  { configurable: true, enumerable: false, value: 'PerformanceResourceTiming', writable: false },
+);
+
 function createTimingInfo({
   startTime = 0,
   redirectStartTime = 0,
@@ -81,6 +86,9 @@ function createTimingInfo({
     initiatorType,
     customGlobal,
     cacheMode,
+    {},
+    200,
+    '',
   );
 
   assert(resource instanceof PerformanceEntry);
@@ -123,6 +131,9 @@ function createTimingInfo({
     initiatorType,
     customGlobal,
     cacheMode,
+    {},
+    200,
+    '',
   );
 
   assert(resource instanceof PerformanceEntry);
@@ -150,6 +161,8 @@ function createTimingInfo({
   assert.strictEqual(resource.encodedBodySize, 0);
   assert.strictEqual(resource.decodedBodySize, 0);
   assert.strictEqual(resource.transferSize, 0);
+  assert.strictEqual(resource.deliveryType, '');
+  assert.strictEqual(resource.responseStatus, 200);
   assert.deepStrictEqual(resource.toJSON(), {
     name: requestedUrl,
     entryType: 'resource',
@@ -172,6 +185,8 @@ function createTimingInfo({
     transferSize: 0,
     encodedBodySize: 0,
     decodedBodySize: 0,
+    responseStatus: 200,
+    deliveryType: '',
   });
   assert.strictEqual(util.inspect(performance.getEntries()), `[
   PerformanceResourceTiming {
@@ -195,7 +210,9 @@ function createTimingInfo({
     responseEnd: 0,
     transferSize: 0,
     encodedBodySize: 0,
-    decodedBodySize: 0
+    decodedBodySize: 0,
+    deliveryType: '',
+    responseStatus: 200
   }
 ]`);
   assert.strictEqual(util.inspect(resource), `PerformanceResourceTiming {
@@ -219,7 +236,9 @@ function createTimingInfo({
   responseEnd: 0,
   transferSize: 0,
   encodedBodySize: 0,
-  decodedBodySize: 0
+  decodedBodySize: 0,
+  deliveryType: '',
+  responseStatus: 200
 }`);
 
   assert(resource instanceof PerformanceEntry);
@@ -247,6 +266,9 @@ function createTimingInfo({
     initiatorType,
     customGlobal,
     cacheMode,
+    {},
+    200,
+    '',
   );
 
   assert(resource instanceof PerformanceEntry);
@@ -302,6 +324,9 @@ function createTimingInfo({
     initiatorType,
     customGlobal,
     cacheMode,
+    {},
+    200,
+    ''
   );
 
   assert(resource instanceof PerformanceEntry);

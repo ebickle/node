@@ -4,8 +4,15 @@ The file `lib/internal/per_context/primordials.js` subclasses and stores the JS
 built-ins that come from the VM so that Node.js built-in modules do not need to
 later look these up from the global proxy, which can be mutated by users.
 
-Usage of primordials should be preferred for any new code, but replacing current
-code with primordials should be
+For some area of the codebase, performance and code readability are deemed more
+important than reliability against prototype pollution:
+
+* `node:http`
+* `node:http2`
+* `node:tls`
+
+Usage of primordials should be preferred for new code in other areas, but
+replacing current code with primordials should be
 [done with care](#primordials-with-known-performance-issues). It is highly
 recommended to ping the relevant team when reviewing a pull request that touches
 one of the subsystems they "own".
@@ -122,6 +129,9 @@ performance of code in Node.js.
 * `SafePromiseAny`
 * `SafePromiseRace`
 * `SafePromisePrototypeFinally`: use `try {} finally {}` block instead.
+* `ReflectConstruct`: Also affects `Reflect.construct`.
+  `ReflectConstruct` creates new types of classes inside functions.
+  Instead consider creating a shared class. See [nodejs/performance#109](https://github.com/nodejs/performance/issues/109).
 
 In general, when sending or reviewing a PR that makes changes in a hot code
 path, use extra caution and run extensive benchmarks.
@@ -363,33 +373,52 @@ Object.defineProperty(Object.prototype, Symbol.isConcatSpreadable, {
 // 1. Lookup @@iterator property on `array` (user-mutable if user-provided).
 // 2. Lookup @@iterator property on %Array.prototype% (user-mutable).
 // 3. Lookup `next` property on %ArrayIteratorPrototype% (user-mutable).
+// 4. Lookup `then` property on %Array.Prototype% (user-mutable).
+// 5. Lookup `then` property on %Object.Prototype% (user-mutable).
 PromiseAll([]); // unsafe
 
-PromiseAll(new SafeArrayIterator([])); // safe
+// 1. Lookup `then` property on %Array.Prototype% (user-mutable).
+// 2. Lookup `then` property on %Object.Prototype% (user-mutable).
+PromiseAll(new SafeArrayIterator([])); // still unsafe
+SafePromiseAll([]); // still unsafe
+
+SafePromiseAllReturnVoid([]); // safe
+SafePromiseAllReturnArrayLike([]); // safe
 
 const array = [promise];
 const set = new SafeSet().add(promise);
 // When running one of these functions on a non-empty iterable, it will also:
-// 4. Lookup `then` property on `promise` (user-mutable if user-provided).
-// 5. Lookup `then` property on `%Promise.prototype%` (user-mutable).
+// 1. Lookup `then` property on `promise` (user-mutable if user-provided).
+// 2. Lookup `then` property on `%Promise.prototype%` (user-mutable).
+// 3. Lookup `then` property on %Array.Prototype% (user-mutable).
+// 4. Lookup `then` property on %Object.Prototype% (user-mutable).
 PromiseAll(new SafeArrayIterator(array)); // unsafe
-
 PromiseAll(set); // unsafe
 
-SafePromiseAll(array); // safe
+SafePromiseAllReturnVoid(array); // safe
+SafePromiseAllReturnArrayLike(array); // safe
 
 // Some key differences between `SafePromise[...]` and `Promise[...]` methods:
 
-// 1. SafePromiseAll, SafePromiseAllSettled, SafePromiseAny, and SafePromiseRace
-//    support passing a mapperFunction as second argument.
+// 1. SafePromiseAll, SafePromiseAllSettled, SafePromiseAny, SafePromiseRace,
+//    SafePromiseAllReturnArrayLike, SafePromiseAllReturnVoid, and
+//    SafePromiseAllSettledReturnVoid support passing a mapperFunction as second
+//    argument.
 SafePromiseAll(ArrayPrototypeMap(array, someFunction));
 SafePromiseAll(array, someFunction); // Same as the above, but more efficient.
 
-// 2. SafePromiseAll, SafePromiseAllSettled, SafePromiseAny, and SafePromiseRace
-//    only support arrays, not iterables. Use ArrayFrom to convert an iterable
-//    to an array.
-SafePromiseAll(set); // ignores set content.
-SafePromiseAll(ArrayFrom(set)); // safe
+// 2. SafePromiseAll, SafePromiseAllSettled, SafePromiseAny, SafePromiseRace,
+//    SafePromiseAllReturnArrayLike, SafePromiseAllReturnVoid, and
+//    SafePromiseAllSettledReturnVoid only support arrays and array-like
+//    objects, not iterables. Use ArrayFrom to convert an iterable to an array.
+SafePromiseAllReturnVoid(set); // ignores set content.
+SafePromiseAllReturnVoid(ArrayFrom(set)); // works
+
+// 3. SafePromiseAllReturnArrayLike is safer than SafePromiseAll, however you
+//    should not use them when its return value is passed to the user as it can
+//    be surprising for them not to receive a genuine array.
+SafePromiseAllReturnArrayLike(array).then((val) => val instanceof Array); // false
+SafePromiseAll(array).then((val) => val instanceof Array); // true
 ```
 
 </details>
@@ -497,7 +526,7 @@ Promise.prototype.then = function then(a, b) {
 let thenBlockExecuted = false;
 PromisePrototypeThen(
   PromiseAll(new SafeArrayIterator([PromiseResolve()])),
-  () => { thenBlockExecuted = true; }
+  () => { thenBlockExecuted = true; },
 );
 process.on('exit', () => console.log(thenBlockExecuted)); // false
 ```
@@ -512,7 +541,7 @@ Promise.prototype.then = function then(a, b) {
 let thenBlockExecuted = false;
 PromisePrototypeThen(
   SafePromiseAll([PromiseResolve()]),
-  () => { thenBlockExecuted = true; }
+  () => { thenBlockExecuted = true; },
 );
 process.on('exit', () => console.log(thenBlockExecuted)); // true
 ```
@@ -753,3 +782,49 @@ const proxyWithNullPrototypeObject = new Proxy(objectToProxy, {
 });
 console.log(proxyWithNullPrototypeObject.someProperty); // genuine value
 ```
+
+### Checking if an object is an instance of a class
+
+#### Using `instanceof` looks up the `@@hasInstance` property of the class
+
+```js
+// User-land
+Object.defineProperty(Array, Symbol.hasInstance, {
+  __proto__: null,
+  value: () => true,
+});
+Object.defineProperty(Date, Symbol.hasInstance, {
+  __proto__: null,
+  value: () => false,
+});
+
+// Core
+const {
+  FunctionPrototypeSymbolHasInstance,
+} = primordials;
+
+console.log(new Date() instanceof Array); // true
+console.log(new Date() instanceof Date); // false
+
+console.log(FunctionPrototypeSymbolHasInstance(Array, new Date())); // false
+console.log(FunctionPrototypeSymbolHasInstance(Date, new Date())); // true
+```
+
+Even without user mutations, the result of `instanceof` can be deceiving when
+dealing with values from different realms:
+
+```js
+const vm = require('node:vm');
+
+console.log(vm.runInNewContext('[]') instanceof Array); // false
+console.log(vm.runInNewContext('[]') instanceof vm.runInNewContext('Array')); // false
+console.log([] instanceof vm.runInNewContext('Array')); // false
+
+console.log(Array.isArray(vm.runInNewContext('[]'))); // true
+console.log(vm.runInNewContext('Array').isArray(vm.runInNewContext('[]'))); // true
+console.log(vm.runInNewContext('Array').isArray([])); // true
+```
+
+In general, using `instanceof` (or `FunctionPrototypeSymbolHasInstance`) checks
+is not recommended, consider checking for the presence of properties or methods
+for more reliable results.

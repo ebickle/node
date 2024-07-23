@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2018-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -56,7 +56,7 @@ static int test_encrypt_decrypt(const EVP_CIPHER *cipher)
     BIO_free(outmsgbio);
     CMS_ContentInfo_free(content);
 
-    return testresult;
+    return testresult && TEST_int_eq(ERR_peek_error(), 0);
 }
 
 static int test_encrypt_decrypt_aes_cbc(void)
@@ -286,20 +286,63 @@ static int test_d2i_CMS_bio_NULL(void)
                                   CMS_NO_SIGNER_CERT_VERIFY));
     CMS_ContentInfo_free(cms);
     BIO_free(bio);
-    return ret;
+    return ret && TEST_int_eq(ERR_peek_error(), 0);
 }
 
-static int test_d2i_CMS_bio_file_encrypted_data(void)
+static unsigned char *read_all(BIO *bio, long *p_len)
+{
+    const int step = 256;
+    unsigned char *buf = NULL;
+    unsigned char *tmp = NULL;
+    int ret;
+
+    *p_len = 0;
+    for (;;) {
+        tmp = OPENSSL_realloc(buf, *p_len + step);
+        if (tmp == NULL)
+            break;
+        buf = tmp;
+        ret = BIO_read(bio, buf + *p_len, step);
+        if (ret < 0)
+            break;
+
+        *p_len += ret;
+
+        if (ret < step)
+            return buf;
+    }
+
+    /* Error */
+    OPENSSL_free(buf);
+    *p_len = 0;
+    return NULL;
+}
+
+static int test_d2i_CMS_decode(const int idx)
 {
     BIO *bio = NULL;
     CMS_ContentInfo *cms = NULL;
+    unsigned char *buf = NULL;
+    const unsigned char *tmp = NULL;
+    long buf_len = 0;
     int ret = 0;
 
-    ERR_clear_error();
-
-    if (!TEST_ptr(bio = BIO_new_file(derin, "r"))
-      || !TEST_ptr(cms = d2i_CMS_bio(bio, NULL)))
+    if (!TEST_ptr(bio = BIO_new_file(derin, "r")))
       goto end;
+
+    switch (idx) {
+    case 0:
+        if (!TEST_ptr(cms = d2i_CMS_bio(bio, NULL)))
+            goto end;
+        break;
+    case 1:
+        if (!TEST_ptr(buf = read_all(bio, &buf_len)))
+            goto end;
+        tmp = buf;
+        if (!TEST_ptr(cms = d2i_CMS_ContentInfo(NULL, &tmp, buf_len)))
+            goto end;
+        break;
+    }
 
     if (!TEST_int_eq(ERR_peek_error(), 0))
         goto end;
@@ -308,6 +351,7 @@ static int test_d2i_CMS_bio_file_encrypted_data(void)
 end:
     CMS_ContentInfo_free(cms);
     BIO_free(bio);
+    OPENSSL_free(buf);
 
     return ret;
 }
@@ -357,7 +401,7 @@ int setup_tests(void)
     ADD_TEST(test_encrypt_decrypt_aes_192_gcm);
     ADD_TEST(test_encrypt_decrypt_aes_256_gcm);
     ADD_TEST(test_d2i_CMS_bio_NULL);
-    ADD_TEST(test_d2i_CMS_bio_file_encrypted_data);
+    ADD_ALL_TESTS(test_d2i_CMS_decode, 2);
     return 1;
 }
 

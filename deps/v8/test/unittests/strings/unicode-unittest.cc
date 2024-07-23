@@ -18,7 +18,7 @@ namespace internal {
 
 namespace {
 
-void DecodeNormally(const std::vector<byte>& bytes,
+void DecodeNormally(const std::vector<uint8_t>& bytes,
                     std::vector<unibrow::uchar>* output) {
   size_t cursor = 0;
   while (cursor < bytes.size()) {
@@ -46,12 +46,12 @@ void DecodeUtf16(const std::vector<uint8_t>& bytes,
   }
 }
 
-void DecodeIncrementally(const std::vector<byte>& bytes,
+void DecodeIncrementally(const std::vector<uint8_t>& bytes,
                          std::vector<unibrow::uchar>* output) {
   unibrow::Utf8::Utf8IncrementalBuffer buffer = 0;
   unibrow::Utf8::State state = unibrow::Utf8::State::kAccept;
-  const byte* cursor = bytes.data();
-  const byte* end = bytes.data() + bytes.size();
+  const uint8_t* cursor = bytes.data();
+  const uint8_t* end = bytes.data() + bytes.size();
   while (cursor < end) {
     unibrow::uchar result =
         unibrow::Utf8::ValueOfIncremental(&cursor, &state, &buffer);
@@ -70,7 +70,7 @@ void DecodeIncrementally(const std::vector<byte>& bytes,
 TEST(UnicodeTest, Utf16BufferReuse) {
   // Not enough continuation bytes before string ends.
   struct TestCase {
-    std::vector<byte> bytes;
+    std::vector<uint8_t> bytes;
     std::vector<unibrow::uchar> unicode_expected;
   };
 
@@ -115,7 +115,7 @@ TEST(UnicodeTest, IncrementalUTF8DecodingVsNonIncrementalUtf8Decoding) {
   // produce the same result. This test was inspired by
   // https://www.cl.cam.ac.uk/~mgk25/ucs/examples/UTF-8-test.txt .
   struct TestCase {
-    std::vector<byte> bytes;
+    std::vector<uint8_t> bytes;
     std::vector<unibrow::uchar> unicode_expected;
   };
 
@@ -499,7 +499,8 @@ class UnicodeWithGCTest : public TestWithHeapInternals {};
 
 #define GC_INSIDE_NEW_STRING_FROM_UTF8_SUB_STRING(NAME, STRING)                \
   TEST_F(UnicodeWithGCTest, GCInsideNewStringFromUtf8SubStringWith##NAME) {    \
-    FLAG_stress_concurrent_allocation = false; /* For SimulateFullSpace. */    \
+    v8_flags.stress_concurrent_allocation =                                    \
+        false; /* For SimulateFullSpace. */                                    \
     v8::HandleScope scope(reinterpret_cast<v8::Isolate*>(isolate()));          \
     Factory* factory = isolate()->factory();                                   \
     /* Length must be bigger than the buffer size of the Utf8Decoder. */       \
@@ -510,7 +511,7 @@ class UnicodeWithGCTest : public TestWithHeapInternals {};
             ->NewStringFromOneByte(v8::base::Vector<const uint8_t>(            \
                 reinterpret_cast<const uint8_t*>(buf), len))                   \
             .ToHandleChecked();                                                \
-    if (FLAG_single_generation) {                                              \
+    if (v8_flags.single_generation) {                                          \
       CHECK(!Heap::InYoungGeneration(*main_string));                           \
       SimulateFullSpace(heap()->old_space());                                  \
     } else {                                                                   \

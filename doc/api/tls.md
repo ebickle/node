@@ -22,14 +22,12 @@ calling `require('node:tls')` will result in an error being thrown.
 
 When using CommonJS, the error thrown can be caught using try/catch:
 
-<!-- eslint-skip -->
-
 ```cjs
 let tls;
 try {
   tls = require('node:tls');
 } catch (err) {
-  console.log('tls support is disabled!');
+  console.error('tls support is disabled!');
 }
 ```
 
@@ -47,7 +45,7 @@ let tls;
 try {
   tls = await import('node:tls');
 } catch (err) {
-  console.log('tls support is disabled!');
+  console.error('tls support is disabled!');
 }
 ```
 
@@ -123,26 +121,20 @@ all sessions). Methods implementing this technique are called "ephemeral".
 Currently two methods are commonly used to achieve perfect forward secrecy (note
 the character "E" appended to the traditional abbreviations):
 
-* [DHE][]: An ephemeral version of the Diffie-Hellman key-agreement protocol.
 * [ECDHE][]: An ephemeral version of the Elliptic Curve Diffie-Hellman
   key-agreement protocol.
+* [DHE][]: An ephemeral version of the Diffie-Hellman key-agreement protocol.
 
-To use perfect forward secrecy using `DHE` with the `node:tls` module, it is
-required to generate Diffie-Hellman parameters and specify them with the
-`dhparam` option to [`tls.createSecureContext()`][]. The following illustrates
-the use of the OpenSSL command-line interface to generate such parameters:
+Perfect forward secrecy using ECDHE is enabled by default. The `ecdhCurve`
+option can be used when creating a TLS server to customize the list of supported
+ECDH curves to use. See [`tls.createServer()`][] for more info.
 
-```bash
-openssl dhparam -outform PEM -out dhparam.pem 2048
-```
+DHE is disabled by default but can be enabled alongside ECDHE by setting the
+`dhparam` option to `'auto'`. Custom DHE parameters are also supported but
+discouraged in favor of automatically selected, well-known parameters.
 
-If using perfect forward secrecy using `ECDHE`, Diffie-Hellman parameters are
-not required and a default ECDHE curve will be used. The `ecdhCurve` property
-can be used when creating a TLS Server to specify the list of names of supported
-curves to use, see [`tls.createServer()`][] for more info.
-
-Perfect forward secrecy was optional up to TLSv1.2, but it is not optional for
-TLSv1.3, because all TLSv1.3 cipher suites use ECDHE.
+Perfect forward secrecy was optional up to TLSv1.2. As of TLSv1.3, (EC)DHE is
+always used (with the exception of PSK-only connections).
 
 ### ALPN and SNI
 
@@ -179,8 +171,10 @@ low-entropy sources is not secure.
 PSK ciphers are disabled by default, and using TLS-PSK thus requires explicitly
 specifying a cipher suite with the `ciphers` option. The list of available
 ciphers can be retrieved via `openssl ciphers -v 'PSK'`. All TLS 1.3
-ciphers are eligible for PSK but currently only those that use SHA256 digest are
-supported they can be retrieved via `openssl ciphers -v -s -tls1_3 -psk`.
+ciphers are eligible for PSK and can be retrieved via
+`openssl ciphers -v -s -tls1_3 -psk`.
+On the client connection, a custom `checkServerIdentity` should be passed
+because the default one will fail in the absence of a certificate.
 
 According to the [RFC 4279][], PSK identities up to 128 bytes in length and
 PSKs up to 64 bytes in length must be supported. As of OpenSSL 1.1.0
@@ -188,6 +182,30 @@ maximum identity size is 128 bytes, and maximum PSK length is 256 bytes.
 
 The current implementation doesn't support asynchronous PSK callbacks due to the
 limitations of the underlying OpenSSL API.
+
+To use TLS-PSK, client and server must specify the `pskCallback` option,
+a function that returns the PSK to use (which must be compatible with
+the selected cipher's digest).
+
+It will be called first on the client:
+
+* hint: {string} optional message sent from the server to help the client
+  decide which identity to use during negotiation.
+  Always `null` if TLS 1.3 is used.
+* Returns: {Object} in the form
+  `{ psk: <Buffer|TypedArray|DataView>, identity: <string> }` or `null`.
+
+Then on the server:
+
+* socket: {tls.TLSSocket} the server socket instance, equivalent to `this`.
+* identity: {string} identity parameter sent from the client.
+* Returns: {Buffer|TypedArray|DataView} the PSK (or `null`).
+
+A return value of `null` stops the negotiation process and sends an
+`unknown_psk_identity` alert message to the other party.
+If the server wishes to hide the fact that the PSK identity was not known,
+the callback must provide some random data as `psk` to make the connection
+fail with `decrypt_error` before negotiation is finished.
 
 ### Client-initiated renegotiation attack mitigation
 
@@ -291,8 +309,8 @@ failures, it is easy to not notice unnecessarily poor TLS performance. The
 OpenSSL CLI can be used to verify that servers are resuming sessions. Use the
 `-reconnect` option to `openssl s_client`, for example:
 
-```console
-$ openssl s_client -connect localhost:443 -reconnect
+```bash
+openssl s_client -connect localhost:443 -reconnect
 ```
 
 Read through the debug output. The first connection should say "New", for
@@ -356,6 +374,30 @@ export NODE_OPTIONS=--tls-cipher-list='ECDHE-RSA-AES128-GCM-SHA256:!RC4'
 node server.js
 ```
 
+To verify, use the following command to show the set cipher list, note the
+difference between `defaultCoreCipherList` and `defaultCipherList`:
+
+```bash
+node --tls-cipher-list='ECDHE-RSA-AES128-GCM-SHA256:!RC4' -p crypto.constants.defaultCipherList | tr ':' '\n'
+ECDHE-RSA-AES128-GCM-SHA256
+!RC4
+```
+
+i.e. the `defaultCoreCipherList` list is set at compilation time and the
+`defaultCipherList` is set at runtime.
+
+To modify the default cipher suites from within the runtime, modify the
+`tls.DEFAULT_CIPHERS` variable, this must be performed before listening on any
+sockets, it will not affect sockets already opened. For example:
+
+```js
+// Remove Obsolete CBC Ciphers and RSA Key Exchange based Ciphers as they don't provide Forward Secrecy
+tls.DEFAULT_CIPHERS +=
+  ':!ECDHE-RSA-AES128-SHA:!ECDHE-RSA-AES128-SHA256:!ECDHE-RSA-AES256-SHA:!ECDHE-RSA-AES256-SHA384' +
+  ':!ECDHE-ECDSA-AES128-SHA:!ECDHE-ECDSA-AES128-SHA256:!ECDHE-ECDSA-AES256-SHA:!ECDHE-ECDSA-AES256-SHA384' +
+  ':!kRSA';
+```
+
 The default can also be replaced on a per client or server basis using the
 `ciphers` option from [`tls.createSecureContext()`][], which is also available
 in [`tls.createServer()`][], [`tls.connect()`][], and when creating new
@@ -402,6 +444,47 @@ There are only five TLSv1.3 cipher suites:
 The first three are enabled by default. The two `CCM`-based suites are supported
 by TLSv1.3 because they may be more performant on constrained systems, but they
 are not enabled by default since they offer less security.
+
+## OpenSSL security level
+
+The OpenSSL library enforces security levels to control the minimum acceptable
+level of security for cryptographic operations. OpenSSL's security levels range
+from 0 to 5, with each level imposing stricter security requirements. The default
+security level is 1, which is generally suitable for most modern applications.
+However, some legacy features and protocols, such as TLSv1, require a lower
+security level (`SECLEVEL=0`) to function properly. For more detailed information,
+please refer to the [OpenSSL documentation on security levels][].
+
+### Setting security levels
+
+To adjust the security level in your Node.js application, you can include `@SECLEVEL=X`
+within a cipher string, where `X` is the desired security level. For example,
+to set the security level to 0 while using the default OpenSSL cipher list, you could use:
+
+```js
+const tls = require('node:tls');
+const port = 443;
+
+tls.createServer({ciphers: 'DEFAULT@SECLEVEL=0', minVersion: 'TLSv1'}, function (socket) {
+  console.log('Client connected with protocol:', socket.getProtocol());
+  socket.end();
+  this.close();
+}).
+listen(port, () => {
+  tls.connect(port, {ciphers: 'DEFAULT@SECLEVEL=0', maxVersion: 'TLSv1'});
+});
+```
+
+This approach sets the security level to 0, allowing the use of legacy features while still
+leveraging the default OpenSSL ciphers.
+
+### Using [`--tls-cipher-list`][]
+
+You can also set the security level and ciphers from the command line using the
+`--tls-cipher-list=DEFAULT@SECLEVEL=X` as described in [Modifying the default TLS cipher suite][].
+However, it is generally discouraged to use the command line option for setting ciphers and it is
+preferable to configure the ciphers for individual contexts within your application code,
+as this approach provides finer control and reduces the risk of globally downgrading the security level.
 
 ## X509 certificate error codes
 
@@ -710,9 +793,10 @@ added: v0.5.3
 -->
 
 * `hostname` {string} A SNI host name or wildcard (e.g. `'*'`)
-* `context` {Object} An object containing any of the possible properties
-  from the [`tls.createSecureContext()`][] `options` arguments (e.g. `key`,
-  `cert`, `ca`, etc).
+* `context` {Object|tls.SecureContext} An object containing any of the possible
+  properties from the [`tls.createSecureContext()`][] `options` arguments
+  (e.g. `key`, `cert`, `ca`, etc), or a TLS context object created with
+  [`tls.createSecureContext()`][] itself.
 
 The `server.addContext()` method adds a secure context that will be used if
 the client request's SNI name matches the supplied `hostname` (or wildcard).
@@ -1174,6 +1258,11 @@ certificate.
 <!-- YAML
 changes:
   - version:
+      - v19.1.0
+      - v18.13.0
+    pr-url: https://github.com/nodejs/node/pull/44935
+    description: Add "ca" property.
+  - version:
       - v17.2.0
       - v16.14.0
     pr-url: https://github.com/nodejs/node/pull/39809
@@ -1186,6 +1275,7 @@ changes:
 A certificate object has properties corresponding to the fields of the
 certificate.
 
+* `ca` {boolean} `true` if a Certificate Authority (CA), `false` otherwise.
 * `raw` {Buffer} The DER encoded X.509 certificate data.
 * `subject` {Object} The certificate subject, described in terms of
   Country (`C`), StateOrProvince (`ST`), Locality (`L`), Organization (`O`),
@@ -1484,6 +1574,20 @@ When running as the server, the socket will be destroyed with an error after
 For TLSv1.3, renegotiation cannot be initiated, it is not supported by the
 protocol.
 
+### `tlsSocket.setKeyCert(context)`
+
+<!-- YAML
+added: v22.5.0
+-->
+
+* `context` {Object|tls.SecureContext} An object containing at least `key` and
+  `cert` properties from the [`tls.createSecureContext()`][] `options`, or a
+  TLS context object created with [`tls.createSecureContext()`][] itself.
+
+The `tlsSocket.setKeyCert()` method sets the private key and certificate to use
+for the socket. This is mainly useful if you wish to select a server certificate
+from a TLS server's `ALPNCallback`.
+
 ### `tlsSocket.setMaxSendFragment(size)`
 
 <!-- YAML
@@ -1623,25 +1727,7 @@ changes:
     verified against the list of supplied CAs. An `'error'` event is emitted if
     verification fails; `err.code` contains the OpenSSL error code. **Default:**
     `true`.
-  * `pskCallback` {Function}
-
-    * hint: {string} optional message sent from the server to help client
-      decide which identity to use during negotiation.
-      Always `null` if TLS 1.3 is used.
-    * Returns: {Object} in the form
-      `{ psk: <Buffer|TypedArray|DataView>, identity: <string> }`
-      or `null` to stop the negotiation process. `psk` must be
-      compatible with the selected cipher's digest.
-      `identity` must use UTF-8 encoding.
-
-    When negotiating TLS-PSK (pre-shared keys), this function is called
-    with optional identity `hint` provided by the server or `null`
-    in case of TLS 1.3 where `hint` was removed.
-    It will be necessary to provide a custom `tls.checkServerIdentity()`
-    for the connection as the default one will try to check host name/IP
-    of the server against the certificate but that's not applicable for PSK
-    because there won't be a certificate present.
-    More information can be found in the [RFC 4279][].
+  * `pskCallback` {Function} For TLS-PSK negotiation, see [Pre-shared keys][].
   * `ALPNProtocols`: {string\[]|Buffer\[]|TypedArray\[]|DataView\[]|Buffer|
     TypedArray|DataView}
     An array of strings, `Buffer`s, `TypedArray`s, or `DataView`s, or a
@@ -1768,6 +1854,17 @@ argument.
 <!-- YAML
 added: v0.11.13
 changes:
+  - version: v22.4.0
+    pr-url: https://github.com/nodejs/node/pull/53329
+    description: The `clientCertEngine`, `privateKeyEngine` and
+                 `privateKeyIdentifier` options depend on custom engine
+                 support in OpenSSL which is deprecated in OpenSSL 3.
+  - version:
+    - v19.8.0
+    - v18.16.0
+    pr-url: https://github.com/nodejs/node/pull/46978
+    description: The `dhparam` option can now be set to `'auto'` to
+                 enable DHE with appropriate well-known parameters.
   - version: v12.12.0
     pr-url: https://github.com/nodejs/node/pull/28973
     description: Added `privateKeyIdentifier` and `privateKeyEngine` options
@@ -1849,15 +1946,13 @@ changes:
     ciphers can be obtained via [`tls.getCiphers()`][]. Cipher names must be
     uppercased in order for OpenSSL to accept them.
   * `clientCertEngine` {string} Name of an OpenSSL engine which can provide the
-    client certificate.
+    client certificate. **Deprecated.**
   * `crl` {string|string\[]|Buffer|Buffer\[]} PEM formatted CRLs (Certificate
     Revocation Lists).
-  * `dhparam` {string|Buffer} Diffie-Hellman parameters, required for
-    [perfect forward secrecy][]. Use `openssl dhparam` to create the parameters.
-    The key length must be greater than or equal to 1024 bits or else an error
-    will be thrown. Although 1024 bits is permissible, use 2048 bits or larger
-    for stronger security. If omitted or invalid, the parameters are silently
-    discarded and DHE ciphers will not be available.
+  * `dhparam` {string|Buffer} `'auto'` or custom Diffie-Hellman parameters,
+    required for non-ECDHE [perfect forward secrecy][]. If omitted or invalid,
+    the parameters are silently discarded and DHE ciphers will not be available.
+    [ECDHE][]-based [perfect forward secrecy][] will still be available.
   * `ecdhCurve` {string} A string describing a named curve or a colon separated
     list of curve NIDs or names, for example `P-521:P-384:P-256`, to use for
     ECDH key agreement. Set to `auto` to select the
@@ -1879,11 +1974,11 @@ changes:
     decrypted with `object.passphrase` if provided, or `options.passphrase` if
     it is not.
   * `privateKeyEngine` {string} Name of an OpenSSL engine to get private key
-    from. Should be used together with `privateKeyIdentifier`.
+    from. Should be used together with `privateKeyIdentifier`. **Deprecated.**
   * `privateKeyIdentifier` {string} Identifier of a private key managed by
     an OpenSSL engine. Should be used together with `privateKeyEngine`.
     Should not be set together with `key`, because both options define a
-    private key in different ways.
+    private key in different ways. **Deprecated.**
   * `maxVersion` {string} Optionally set the maximum TLS version to allow. One
     of `'TLSv1.3'`, `'TLSv1.2'`, `'TLSv1.1'`, or `'TLSv1'`. Cannot be specified
     along with the `secureProtocol` option; use one or the other.
@@ -1892,7 +1987,7 @@ changes:
     of `'TLSv1.3'`, `'TLSv1.2'`, `'TLSv1.1'`, or `'TLSv1'`. Cannot be specified
     along with the `secureProtocol` option; use one or the other. Avoid
     setting to less than TLSv1.2, but it may be required for
-    interoperability.
+    interoperability. Versions before TLSv1.2 may require downgrading the [OpenSSL Security Level][].
     **Default:** [`tls.DEFAULT_MIN_VERSION`][].
   * `passphrase` {string} Shared passphrase used for a single private key and/or
     a PFX.
@@ -1934,14 +2029,22 @@ from `process.argv` as the default value of the `sessionIdContext` option, other
 APIs that create secure contexts have no default value.
 
 The `tls.createSecureContext()` method creates a `SecureContext` object. It is
-usable as an argument to several `tls` APIs, such as [`tls.createServer()`][]
-and [`server.addContext()`][], but has no public methods.
+usable as an argument to several `tls` APIs, such as [`server.addContext()`][],
+but has no public methods. The [`tls.Server`][] constructor and the
+[`tls.createServer()`][] method do not support the `secureContext` option.
 
 A key is _required_ for ciphers that use certificates. Either `key` or
 `pfx` can be used to provide it.
 
 If the `ca` option is not given, then Node.js will default to using
 [Mozilla's publicly trusted list of CAs][].
+
+Custom DHE parameters are discouraged in favor of the new `dhparam: 'auto'`
+option. When set to `'auto'`, well-known DHE parameters of sufficient strength
+will be selected automatically. Otherwise, if necessary, `openssl dhparam` can
+be used to create custom parameters. The key length must be greater than or
+equal to 1024 bits or else an error will be thrown. Although 1024 bits is
+permissible, use 2048 bits or larger for stronger security.
 
 ## `tls.createSecurePair([context][, isServer][, requestCert][, rejectUnauthorized][, options])`
 
@@ -2012,6 +2115,15 @@ where `secureSocket` has the same API as `pair.cleartext`.
 <!-- YAML
 added: v0.3.2
 changes:
+  - version: v22.4.0
+    pr-url: https://github.com/nodejs/node/pull/53329
+    description: The `clientCertEngine` option depends on custom engine
+                 support in OpenSSL which is deprecated in OpenSSL 3.
+  - version:
+    - v20.4.0
+    - v18.19.0
+    pr-url: https://github.com/nodejs/node/pull/45190
+    description: The `options` parameter can now include `ALPNCallback`.
   - version: v19.0.0
     pr-url: https://github.com/nodejs/node/pull/44031
     description: If `ALPNProtocols` is set, incoming connections that send an
@@ -2042,8 +2154,19 @@ changes:
     e.g. `0x05hello0x05world`, where the first byte is the length of the next
     protocol name. Passing an array is usually much simpler, e.g.
     `['hello', 'world']`. (Protocols should be ordered by their priority.)
+  * `ALPNCallback`: {Function} If set, this will be called when a
+    client opens a connection using the ALPN extension. One argument will
+    be passed to the callback: an object containing `servername` and
+    `protocols` fields, respectively containing the server name from
+    the SNI extension (if any) and an array of ALPN protocol name strings. The
+    callback must return either one of the strings listed in
+    `protocols`, which will be returned to the client as the selected
+    ALPN protocol, or `undefined`, to reject the connection with a fatal alert.
+    If a string is returned that does not match one of the client's ALPN
+    protocols, an error will be thrown. This option cannot be used with the
+    `ALPNProtocols` option, and setting both options will throw an error.
   * `clientCertEngine` {string} Name of an OpenSSL engine which can provide the
-    client certificate.
+    client certificate. **Deprecated.**
   * `enableTrace` {boolean} If `true`, [`tls.TLSSocket.enableTrace()`][] will be
     called on new connections. Tracing can be enabled after the secure
     connection is established, but this option must be used to trace the secure
@@ -2072,25 +2195,7 @@ changes:
     default callback with high-level API will be used (see below).
   * `ticketKeys`: {Buffer} 48-bytes of cryptographically strong pseudorandom
     data. See [Session Resumption][] for more information.
-  * `pskCallback` {Function}
-
-    * socket: {tls.TLSSocket} the server [`tls.TLSSocket`][] instance for
-      this connection.
-    * identity: {string} identity parameter sent from the client.
-    * Returns: {Buffer|TypedArray|DataView} pre-shared key that must either be
-      a buffer or `null` to stop the negotiation process. Returned PSK must be
-      compatible with the selected cipher's digest.
-
-    When negotiating TLS-PSK (pre-shared keys), this function is called
-    with the identity provided by the client.
-    If the return value is `null` the negotiation process will stop and an
-    "unknown\_psk\_identity" alert message will be sent to the other party.
-    If the server wishes to hide the fact that the PSK identity was not known,
-    the callback must provide some random data as `psk` to make the connection
-    fail with "decrypt\_error" before negotiation is finished.
-    PSK ciphers are disabled by default, and using TLS-PSK thus
-    requires explicitly specifying a cipher suite with the `ciphers` option.
-    More information can be found in the [RFC 4279][].
+  * `pskCallback` {Function} For TLS-PSK negotiation, see [Pre-shared keys][].
   * `pskIdentityHint` {string} optional hint to send to a client to help
     with selecting the identity during TLS-PSK negotiation. Will be ignored
     in TLS 1.3. Upon failing to set pskIdentityHint `'tlsClientError'` will be
@@ -2122,7 +2227,7 @@ const options = {
   requestCert: true,
 
   // This is necessary only if the client uses a self-signed certificate.
-  ca: [ fs.readFileSync('client-cert.pem') ]
+  ca: [ fs.readFileSync('client-cert.pem') ],
 };
 
 const server = tls.createServer(options, (socket) => {
@@ -2213,11 +2318,26 @@ added: v11.4.0
 * {string} The default value of the `minVersion` option of
   [`tls.createSecureContext()`][]. It can be assigned any of the supported TLS
   protocol versions, `'TLSv1.3'`, `'TLSv1.2'`, `'TLSv1.1'`, or `'TLSv1'`.
+  Versions before TLSv1.2 may require downgrading the [OpenSSL Security Level][].
   **Default:** `'TLSv1.2'`, unless changed using CLI options. Using
   `--tls-min-v1.0` sets the default to `'TLSv1'`. Using `--tls-min-v1.1` sets
   the default to `'TLSv1.1'`. Using `--tls-min-v1.3` sets the default to
   `'TLSv1.3'`. If multiple of the options are provided, the lowest minimum is
   used.
+
+## `tls.DEFAULT_CIPHERS`
+
+<!-- YAML
+added:
+ - v19.8.0
+ - v18.16.0
+-->
+
+* {string} The default value of the `ciphers` option of
+  [`tls.createSecureContext()`][]. It can be assigned any of the supported
+  OpenSSL ciphers.  Defaults to the content of
+  `crypto.constants.defaultCoreCipherList`, unless changed using CLI options
+  using `--tls-default-ciphers`.
 
 [CVE-2021-44531]: https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-44531
 [Chrome's 'modern cryptography' setting]: https://www.chromium.org/Home/chromium-security/education/tls#TOC-Cipher-Suites
@@ -2227,6 +2347,9 @@ added: v11.4.0
 [Mozilla's publicly trusted list of CAs]: https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins/certdata.txt
 [OCSP request]: https://en.wikipedia.org/wiki/OCSP_stapling
 [OpenSSL Options]: crypto.md#openssl-options
+[OpenSSL Security Level]: #openssl-security-level
+[OpenSSL documentation on security levels]: https://www.openssl.org/docs/manmaster/man3/SSL_CTX_set_security_level.html#DEFAULT-CALLBACK-BEHAVIOUR
+[Pre-shared keys]: #pre-shared-keys
 [RFC 2246]: https://www.ietf.org/rfc/rfc2246.txt
 [RFC 4086]: https://tools.ietf.org/html/rfc4086
 [RFC 4279]: https://tools.ietf.org/html/rfc4279

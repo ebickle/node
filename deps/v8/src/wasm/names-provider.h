@@ -38,8 +38,6 @@ class V8_EXPORT_PRIVATE NamesProvider {
                 base::Vector<const uint8_t> wire_bytes);
   ~NamesProvider();
 
-  // Returns {false} if {devtools_behavior} == false and no name for
-  // {function_index} was present in the name section.
   void PrintFunctionName(StringBuilder& out, uint32_t function_index,
                          FunctionNamesBehavior behavior = kWasmInternal,
                          IndexAsComment index_as_comment = kDontPrintIndex);
@@ -56,9 +54,11 @@ class V8_EXPORT_PRIVATE NamesProvider {
                        IndexAsComment index_as_comment = kDontPrintIndex);
   void PrintGlobalName(StringBuilder& out, uint32_t global_index,
                        IndexAsComment index_as_comment = kDontPrintIndex);
-  void PrintElementSegmentName(StringBuilder& out,
-                               uint32_t element_segment_index);
-  void PrintDataSegmentName(StringBuilder& out, uint32_t data_segment_index);
+  void PrintElementSegmentName(
+      StringBuilder& out, uint32_t element_segment_index,
+      IndexAsComment index_as_comment = kDontPrintIndex);
+  void PrintDataSegmentName(StringBuilder& out, uint32_t data_segment_index,
+                            IndexAsComment index_as_comment = kDontPrintIndex);
   void PrintFieldName(StringBuilder& out, uint32_t struct_index,
                       uint32_t field_index,
                       IndexAsComment index_as_comment = kDontPrintIndex);
@@ -67,6 +67,8 @@ class V8_EXPORT_PRIVATE NamesProvider {
 
   void PrintHeapType(StringBuilder& out, HeapType type);
   void PrintValueType(StringBuilder& out, ValueType type);
+
+  size_t EstimateCurrentMemoryConsumption() const;
 
  private:
   void DecodeNamesIfNotYetDone();

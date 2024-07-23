@@ -80,7 +80,7 @@ function createUnsafeStringMethodReport(context, name, lookedUpProperty) {
         node,
         message: `${name} looks up the ${lookedUpProperty} property on the first argument`,
       });
-    }
+    },
   };
 }
 
@@ -98,7 +98,7 @@ function createUnsafeStringMethodOnRegexReport(context, name, lookedUpProperty) 
         node,
         message: `${name} looks up the ${lookedUpProperty} property of the passed regex, use ${safePrimordialName} directly`,
       });
-    }
+    },
   };
 }
 
@@ -148,14 +148,14 @@ module.exports = {
           suggest: [{
             desc: 'Use RegexpPrototypeExec instead',
             fix(fixer) {
-              const testRange = { ...node.range };
-              testRange.start = testRange.start + 'RegexpPrototype'.length;
-              testRange.end = testRange.start + 'Test'.length;
+              const testRange = [ ...node.range ];
+              testRange[0] = testRange[0] + 'RegexpPrototype'.length;
+              testRange[1] = testRange[0] + 'Test'.length;
               return [
                 fixer.replaceTextRange(testRange, 'Exec'),
                 fixer.insertTextAfter(node, ' !== null'),
               ];
-            }
+            },
           }],
         });
       },
@@ -194,6 +194,13 @@ module.exports = {
         });
       },
 
+      [`ExpressionStatement>AwaitExpression>${CallExpression(/^(Safe)?PromiseAll(Settled)?$/)}`](node) {
+        context.report({
+          node,
+          message: `Use ${node.callee.name}ReturnVoid`,
+        });
+      },
+
       [CallExpression('PromisePrototypeCatch')](node) {
         context.report({
           node,
@@ -215,6 +222,14 @@ module.exports = {
         context.report({
           node,
           message: `Use Safe${node.callee.name} instead of ${node.callee.name}`,
+        });
+      },
+
+      [CallExpression('ArrayPrototypeConcat')](node) {
+        context.report({
+          node,
+          message: '%Array.prototype.concat% looks up `@@isConcatSpreadable` ' +
+                   'which can be subject to prototype pollution',
         });
       },
     };

@@ -680,7 +680,7 @@ const o = {
       'eiusmod \ntempor incididunt ut labore et dolore magna aliqua.',
     'test',
     'foo']], 4],
-  b: new Map([['za', 1], ['zb', 'test']])
+  b: new Map([['za', 1], ['zb', 'test']]),
 };
 console.log(util.inspect(o, { compact: true, depth: 5, breakLength: 80 }));
 
@@ -748,7 +748,7 @@ const assert = require('node:assert');
 const o1 = {
   b: [2, 3, 1],
   a: '`a` comes before `b`',
-  c: new Set([2, 3, 1])
+  c: new Set([2, 3, 1]),
 };
 console.log(inspect(o1, { sorted: true }));
 // { a: '`a` comes before `b`', b: [ 2, 3, 1 ], c: Set(3) { 1, 2, 3 } }
@@ -758,11 +758,11 @@ console.log(inspect(o1, { sorted: (a, b) => b.localeCompare(a) }));
 const o2 = {
   c: new Set([2, 1, 3]),
   a: '`a` comes before `b`',
-  b: [2, 3, 1]
+  b: [2, 3, 1],
 };
 assert.strict.equal(
   inspect(o1, { sorted: true }),
-  inspect(o2, { sorted: true })
+  inspect(o2, { sorted: true }),
 );
 ```
 
@@ -777,8 +777,14 @@ const million = 1_000_000;
 const bigNumber = 123_456_789n;
 const bigDecimal = 1_234.123_45;
 
-console.log(thousand, million, bigNumber, bigDecimal);
-// 1_000 1_000_000 123_456_789n 1_234.123_45
+console.log(inspect(thousand, { numericSeparator: true }));
+// 1_000
+console.log(inspect(million, { numericSeparator: true }));
+// 1_000_000
+console.log(inspect(bigNumber, { numericSeparator: true }));
+// 123_456_789n
+console.log(inspect(bigDecimal, { numericSeparator: true }));
+// 1_234.123_45
 ```
 
 `util.inspect()` is a synchronous method intended for debugging. Its maximum
@@ -909,7 +915,7 @@ class Box {
     }
 
     const newOptions = Object.assign({}, options, {
-      depth: options.depth === null ? null : options.depth - 1
+      depth: options.depth === null ? null : options.depth - 1,
     });
 
     // Five space padding because that's the size of "Box< ".
@@ -1027,7 +1033,9 @@ equality.
 ## Class: `util.MIMEType`
 
 <!-- YAML
-added: REPLACEME
+added:
+  - v19.1.0
+  - v18.13.0
 -->
 
 > Stability: 1 - Experimental
@@ -1078,7 +1086,7 @@ console.log(String(myMIME));
 // Prints: text/plain
 ```
 
-#### `mime.type`
+### `mime.type`
 
 * {string}
 
@@ -1107,10 +1115,10 @@ myMIME.type = 'application';
 console.log(myMIME.type);
 // Prints: application
 console.log(String(myMIME));
-// Prints: application/javascript/javascript
+// Prints: application/javascript
 ```
 
-#### `mime.subtype`
+### `mime.subtype`
 
 * {string}
 
@@ -1142,7 +1150,7 @@ console.log(String(myMIME));
 // Prints: text/javascript
 ```
 
-#### `mime.essence`
+### `mime.essence`
 
 * {string}
 
@@ -1175,7 +1183,7 @@ console.log(String(myMIME));
 // Prints: application/javascript;key=value
 ```
 
-#### `mime.params`
+### `mime.params`
 
 * {MIMEParams}
 
@@ -1183,7 +1191,7 @@ Gets the [`MIMEParams`][] object representing the
 parameters of the MIME. This property is read-only. See
 [`MIMEParams`][] documentation for details.
 
-#### `mime.toString()`
+### `mime.toString()`
 
 * Returns: {string}
 
@@ -1192,7 +1200,7 @@ The `toString()` method on the `MIMEType` object returns the serialized MIME.
 Because of the need for standard compliance, this method does not allow users
 to customize the serialization process of the MIME.
 
-#### `mime.toJSON()`
+### `mime.toJSON()`
 
 * Returns: {string}
 
@@ -1223,16 +1231,18 @@ console.log(JSON.stringify(myMIMES));
 // Prints: ["image/png", "image/gif"]
 ```
 
-### Class: `util.MIMEParams`
+## Class: `util.MIMEParams`
 
 <!-- YAML
-added: REPLACEME
+added:
+  - v19.1.0
+  - v18.13.0
 -->
 
 The `MIMEParams` API provides read and write access to the parameters of a
 `MIMEType`.
 
-#### Constructor: `new MIMEParams()`
+### Constructor: `new MIMEParams()`
 
 Creates a new `MIMEParams` object by with empty parameters
 
@@ -1248,13 +1258,13 @@ const { MIMEParams } = require('node:util');
 const myParams = new MIMEParams();
 ```
 
-#### `mimeParams.delete(name)`
+### `mimeParams.delete(name)`
 
 * `name` {string}
 
 Remove all name-value pairs whose name is `name`.
 
-#### `mimeParams.entries()`
+### `mimeParams.entries()`
 
 * Returns: {Iterator}
 
@@ -1262,23 +1272,23 @@ Returns an iterator over each of the name-value pairs in the parameters.
 Each item of the iterator is a JavaScript `Array`. The first item of the array
 is the `name`, the second item of the array is the `value`.
 
-#### `mimeParams.get(name)`
+### `mimeParams.get(name)`
 
 * `name` {string}
-* Returns: {string} or `null` if there is no name-value pair with the given
-  `name`.
+* Returns: {string | null} A string or `null` if there is no name-value pair
+  with the given `name`.
 
 Returns the value of the first name-value pair whose name is `name`. If there
 are no such pairs, `null` is returned.
 
-#### `mimeParams.has(name)`
+### `mimeParams.has(name)`
 
 * `name` {string}
 * Returns: {boolean}
 
 Returns `true` if there is at least one name-value pair whose name is `name`.
 
-#### `mimeParams.keys()`
+### `mimeParams.keys()`
 
 * Returns: {Iterator}
 
@@ -1308,7 +1318,7 @@ for (const name of params.keys()) {
 //   bar
 ```
 
-#### `mimeParams.set(name, value)`
+### `mimeParams.set(name, value)`
 
 * `name` {string}
 * `value` {string}
@@ -1324,7 +1334,7 @@ const { params } = new MIMEType('text/plain;foo=0;bar=1');
 params.set('foo', 'def');
 params.set('baz', 'xyz');
 console.log(params.toString());
-// Prints: foo=def&bar=1&baz=xyz
+// Prints: foo=def;bar=1;baz=xyz
 ```
 
 ```cjs
@@ -1334,16 +1344,16 @@ const { params } = new MIMEType('text/plain;foo=0;bar=1');
 params.set('foo', 'def');
 params.set('baz', 'xyz');
 console.log(params.toString());
-// Prints: foo=def&bar=1&baz=xyz
+// Prints: foo=def;bar=1;baz=xyz
 ```
 
-#### `mimeParams.values()`
+### `mimeParams.values()`
 
 * Returns: {Iterator}
 
 Returns an iterator over the values of each name-value pair.
 
-#### `mimeParams[@@iterator]()`
+### `mimeParams[@@iterator]()`
 
 * Returns: {Iterator}
 
@@ -1380,7 +1390,16 @@ added:
   - v18.3.0
   - v16.17.0
 changes:
-  - version: v18.11.0
+  - version: v22.4.0
+    pr-url: https://github.com/nodejs/node/pull/53107
+    description: add support for allowing negative options in input `config`.
+  - version:
+    - v20.0.0
+    pr-url: https://github.com/nodejs/node/pull/46718
+    description: The API is no longer experimental.
+  - version:
+    - v18.11.0
+    - v16.19.0
     pr-url: https://github.com/nodejs/node/pull/44631
     description: Add support for default values in input `config`.
   - version:
@@ -1390,8 +1409,6 @@ changes:
     description: add support for returning detailed parse information
                  using `tokens` in input `config` and returned properties.
 -->
-
-> Stability: 1 - Experimental
 
 * `config` {Object} Used to provide arguments for parsing and to configure
   the parser. `config` supports the following properties:
@@ -1415,6 +1432,9 @@ changes:
   * `allowPositionals` {boolean} Whether this command accepts positional
     arguments.
     **Default:** `false` if `strict` is `true`, otherwise `true`.
+  * `allowNegative` {boolean} If `true`, allows explicitly setting boolean
+    options to `false` by prefixing the option name with `--no-`.
+    **Default:** `false`.
   * `tokens` {boolean} Return the parsed tokens. This is useful for extending
     the built-in behavior, from adding additional checks through to reprocessing
     the tokens in different ways.
@@ -1437,15 +1457,15 @@ const args = ['-f', '--bar', 'b'];
 const options = {
   foo: {
     type: 'boolean',
-    short: 'f'
+    short: 'f',
   },
   bar: {
-    type: 'string'
-  }
+    type: 'string',
+  },
 };
 const {
   values,
-  positionals
+  positionals,
 } = parseArgs({ args, options });
 console.log(values, positionals);
 // Prints: [Object: null prototype] { foo: true, bar: 'b' } []
@@ -1457,26 +1477,23 @@ const args = ['-f', '--bar', 'b'];
 const options = {
   foo: {
     type: 'boolean',
-    short: 'f'
+    short: 'f',
   },
   bar: {
-    type: 'string'
-  }
+    type: 'string',
+  },
 };
 const {
   values,
-  positionals
+  positionals,
 } = parseArgs({ args, options });
 console.log(values, positionals);
 // Prints: [Object: null prototype] { foo: true, bar: 'b' } []
 ```
 
-`util.parseArgs` is experimental and behavior may change. Join the
-conversation in [pkgjs/parseargs][] to contribute to the design.
-
 ### `parseArgs` `tokens`
 
-Detailed parse information is available for adding custom behaviours by
+Detailed parse information is available for adding custom behaviors by
 specifying `tokens: true` in the configuration.
 The returned tokens have properties describing:
 
@@ -1500,9 +1517,9 @@ that appear more than once in args produce a token for each use. Short option
 groups like `-xy` expand to a token for each option. So `-xxx` produces
 three tokens.
 
-For example to use the returned tokens to add support for a negated option
-like `--no-color`, the tokens can be reprocessed to change the value stored
-for the negated option.
+For example, to add support for a negated option like `--no-color` (which
+`allowNegative` supports when the option is of `boolean` type), the returned
+tokens can be reprocessed to change the value stored for the negated option.
 
 ```mjs
 import { parseArgs } from 'node:util';
@@ -1582,10 +1599,47 @@ $ node negate.js --no-logfile --logfile=test.log --color --no-color
 { logfile: 'test.log', color: false }
 ```
 
+## `util.parseEnv(content)`
+
+> Stability: 1.1 - Active development
+
+<!-- YAML
+added:
+  - v21.7.0
+  - v20.12.0
+-->
+
+* `content` {string}
+
+The raw contents of a `.env` file.
+
+* Returns: {Object}
+
+Given an example `.env` file:
+
+```cjs
+const { parseEnv } = require('node:util');
+
+parseEnv('HELLO=world\nHELLO=oh my\n');
+// Returns: { HELLO: 'oh my' }
+```
+
+```mjs
+import { parseEnv } from 'node:util';
+
+parseEnv('HELLO=world\nHELLO=oh my\n');
+// Returns: { HELLO: 'oh my' }
+```
+
 ## `util.promisify(original)`
 
 <!-- YAML
 added: v8.0.0
+changes:
+  - version: v20.8.0
+    pr-url: https://github.com/nodejs/node/pull/49647
+    description: Calling `promisify` on a function that returns a `Promise` is
+                 deprecated.
 -->
 
 * `original` {Function}
@@ -1619,6 +1673,8 @@ async function callStat() {
   const stats = await stat('.');
   console.log(`This directory is owned by ${stats.uid}`);
 }
+
+callStat();
 ```
 
 If there is an `original[util.promisify.custom]` property present, `promisify`
@@ -1743,6 +1799,54 @@ Returns `str` with any ANSI escape codes removed.
 console.log(util.stripVTControlCharacters('\u001B[4mvalue\u001B[0m'));
 // Prints "value"
 ```
+
+## `util.styleText(format, text)`
+
+> Stability: 1.1 - Active development
+
+<!-- YAML
+added:
+  - v21.7.0
+  - v20.12.0
+-->
+
+* `format` {string | Array} A text format or an Array
+  of text formats defined in `util.inspect.colors`.
+* `text` {string} The text to to be formatted.
+
+This function returns a formatted text considering the `format` passed.
+
+```mjs
+import { styleText } from 'node:util';
+const errorMessage = styleText('red', 'Error! Error!');
+console.log(errorMessage);
+```
+
+```cjs
+const { styleText } = require('node:util');
+const errorMessage = styleText('red', 'Error! Error!');
+console.log(errorMessage);
+```
+
+`util.inspect.colors` also provides text formats such as `italic`, and
+`underline` and you can combine both:
+
+```cjs
+console.log(
+  util.styleText(['underline', 'italic'], 'My italic underlined message'),
+);
+```
+
+When passing an array of formats, the order of the format applied
+is left to right so the following style might overwrite the previous one.
+
+```cjs
+console.log(
+  util.styleText(['red', 'green'], 'text'), // green
+);
+```
+
+The full list of formats can be found in [modifiers][].
 
 ## Class: `util.TextDecoder`
 
@@ -1981,6 +2085,53 @@ Marks the given {AbortSignal} as transferable so that it can be used with
 const signal = transferableAbortSignal(AbortSignal.timeout(100));
 const channel = new MessageChannel();
 channel.port2.postMessage(signal, [signal]);
+```
+
+## `util.aborted(signal, resource)`
+
+<!-- YAML
+added:
+ - v19.7.0
+ - v18.16.0
+-->
+
+> Stability: 1 - Experimental
+
+* `signal` {AbortSignal}
+* `resource` {Object} Any non-null entity, reference to which is held weakly.
+* Returns: {Promise}
+
+Listens to abort event on the provided `signal` and
+returns a promise that is fulfilled when the `signal` is
+aborted. If the passed `resource` is garbage collected before the `signal` is
+aborted, the returned promise shall remain pending indefinitely.
+
+```cjs
+const { aborted } = require('node:util');
+
+const dependent = obtainSomethingAbortable();
+
+aborted(dependent.signal, dependent).then(() => {
+  // Do something when dependent is aborted.
+});
+
+dependent.on('event', () => {
+  dependent.abort();
+});
+```
+
+```mjs
+import { aborted } from 'node:util';
+
+const dependent = obtainSomethingAbortable();
+
+aborted(dependent.signal, dependent).then(() => {
+  // Do something when dependent is aborted.
+});
+
+dependent.on('event', () => {
+  dependent.abort();
+});
 ```
 
 ## `util.types`
@@ -2448,9 +2599,7 @@ added: v10.0.0
 
 Returns `true` if the value is an instance of a [Module Namespace Object][].
 
-<!-- eslint-skip -->
-
-```js
+```mjs
 import * as ns from './a.js';
 
 util.types.isModuleNamespaceObject(ns);  // Returns true
@@ -2465,12 +2614,43 @@ added: v10.0.0
 * `value` {any}
 * Returns: {boolean}
 
-Returns `true` if the value is an instance of a built-in [`Error`][] type.
+Returns `true` if the value was returned by the constructor of a
+[built-in `Error` type][].
 
 ```js
-util.types.isNativeError(new Error());  // Returns true
-util.types.isNativeError(new TypeError());  // Returns true
-util.types.isNativeError(new RangeError());  // Returns true
+console.log(util.types.isNativeError(new Error()));  // true
+console.log(util.types.isNativeError(new TypeError()));  // true
+console.log(util.types.isNativeError(new RangeError()));  // true
+```
+
+Subclasses of the native error types are also native errors:
+
+```js
+class MyError extends Error {}
+console.log(util.types.isNativeError(new MyError()));  // true
+```
+
+A value being `instanceof` a native error class is not equivalent to `isNativeError()`
+returning `true` for that value. `isNativeError()` returns `true` for errors
+which come from a different [realm][] while `instanceof Error` returns `false`
+for these errors:
+
+```js
+const vm = require('node:vm');
+const context = vm.createContext({});
+const myError = vm.runInContext('new Error()', context);
+console.log(util.types.isNativeError(myError)); // true
+console.log(myError instanceof Error); // false
+```
+
+Conversely, `isNativeError()` returns `false` for all objects which were not
+returned by the constructor of a native error. That includes values
+which are `instanceof` native errors:
+
+```js
+const myError = { __proto__: Error.prototype };
+console.log(util.types.isNativeError(myError)); // false
+console.log(myError instanceof Error); // true
 ```
 
 ### `util.types.isNumberObject(value)`
@@ -2744,25 +2924,6 @@ Returns `true` if the value is a built-in [`WeakSet`][] instance.
 util.types.isWeakSet(new WeakSet());  // Returns true
 ```
 
-### `util.types.isWebAssemblyCompiledModule(value)`
-
-<!-- YAML
-added: v10.0.0
-deprecated: v14.0.0
--->
-
-> Stability: 0 - Deprecated: Use `value instanceof WebAssembly.Module` instead.
-
-* `value` {any}
-* Returns: {boolean}
-
-Returns `true` if the value is a built-in [`WebAssembly.Module`][] instance.
-
-```js
-const module = new WebAssembly.Module(wasmBuffer);
-util.types.isWebAssemblyCompiledModule(module);  // Returns true
-```
-
 ## Deprecated APIs
 
 The following APIs are deprecated and should no longer be used. Existing
@@ -2813,424 +2974,6 @@ util.isArray({});
 // Returns: false
 ```
 
-### `util.isBoolean(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use `typeof value === 'boolean'` instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is a `Boolean`. Otherwise, returns `false`.
-
-```js
-const util = require('node:util');
-
-util.isBoolean(1);
-// Returns: false
-util.isBoolean(0);
-// Returns: false
-util.isBoolean(false);
-// Returns: true
-```
-
-### `util.isBuffer(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use [`Buffer.isBuffer()`][] instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is a `Buffer`. Otherwise, returns `false`.
-
-```js
-const util = require('node:util');
-
-util.isBuffer({ length: 0 });
-// Returns: false
-util.isBuffer([]);
-// Returns: false
-util.isBuffer(Buffer.from('hello world'));
-// Returns: true
-```
-
-### `util.isDate(object)`
-
-<!-- YAML
-added: v0.6.0
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use [`util.types.isDate()`][] instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is a `Date`. Otherwise, returns `false`.
-
-```js
-const util = require('node:util');
-
-util.isDate(new Date());
-// Returns: true
-util.isDate(Date());
-// false (without 'new' returns a String)
-util.isDate({});
-// Returns: false
-```
-
-### `util.isError(object)`
-
-<!-- YAML
-added: v0.6.0
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use [`util.types.isNativeError()`][] instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is an [`Error`][]. Otherwise, returns
-`false`.
-
-```js
-const util = require('node:util');
-
-util.isError(new Error());
-// Returns: true
-util.isError(new TypeError());
-// Returns: true
-util.isError({ name: 'Error', message: 'an error occurred' });
-// Returns: false
-```
-
-This method relies on `Object.prototype.toString()` behavior. It is
-possible to obtain an incorrect result when the `object` argument manipulates
-`@@toStringTag`.
-
-```js
-const util = require('node:util');
-const obj = { name: 'Error', message: 'an error occurred' };
-
-util.isError(obj);
-// Returns: false
-obj[Symbol.toStringTag] = 'Error';
-util.isError(obj);
-// Returns: true
-```
-
-### `util.isFunction(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use `typeof value === 'function'` instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is a `Function`. Otherwise, returns
-`false`.
-
-```js
-const util = require('node:util');
-
-function Foo() {}
-const Bar = () => {};
-
-util.isFunction({});
-// Returns: false
-util.isFunction(Foo);
-// Returns: true
-util.isFunction(Bar);
-// Returns: true
-```
-
-### `util.isNull(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use `value === null` instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is strictly `null`. Otherwise, returns
-`false`.
-
-```js
-const util = require('node:util');
-
-util.isNull(0);
-// Returns: false
-util.isNull(undefined);
-// Returns: false
-util.isNull(null);
-// Returns: true
-```
-
-### `util.isNullOrUndefined(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use
-> `value === undefined || value === null` instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is `null` or `undefined`. Otherwise,
-returns `false`.
-
-```js
-const util = require('node:util');
-
-util.isNullOrUndefined(0);
-// Returns: false
-util.isNullOrUndefined(undefined);
-// Returns: true
-util.isNullOrUndefined(null);
-// Returns: true
-```
-
-### `util.isNumber(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use `typeof value === 'number'` instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is a `Number`. Otherwise, returns `false`.
-
-```js
-const util = require('node:util');
-
-util.isNumber(false);
-// Returns: false
-util.isNumber(Infinity);
-// Returns: true
-util.isNumber(0);
-// Returns: true
-util.isNumber(NaN);
-// Returns: true
-```
-
-### `util.isObject(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated:
-> Use `value !== null && typeof value === 'object'` instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is strictly an `Object` **and** not a
-`Function` (even though functions are objects in JavaScript).
-Otherwise, returns `false`.
-
-```js
-const util = require('node:util');
-
-util.isObject(5);
-// Returns: false
-util.isObject(null);
-// Returns: false
-util.isObject({});
-// Returns: true
-util.isObject(() => {});
-// Returns: false
-```
-
-### `util.isPrimitive(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use
-> `(typeof value !== 'object' && typeof value !== 'function') || value === null`
-> instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is a primitive type. Otherwise, returns
-`false`.
-
-```js
-const util = require('node:util');
-
-util.isPrimitive(5);
-// Returns: true
-util.isPrimitive('foo');
-// Returns: true
-util.isPrimitive(false);
-// Returns: true
-util.isPrimitive(null);
-// Returns: true
-util.isPrimitive(undefined);
-// Returns: true
-util.isPrimitive({});
-// Returns: false
-util.isPrimitive(() => {});
-// Returns: false
-util.isPrimitive(/^$/);
-// Returns: false
-util.isPrimitive(new Date());
-// Returns: false
-```
-
-### `util.isRegExp(object)`
-
-<!-- YAML
-added: v0.6.0
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is a `RegExp`. Otherwise, returns `false`.
-
-```js
-const util = require('node:util');
-
-util.isRegExp(/some regexp/);
-// Returns: true
-util.isRegExp(new RegExp('another regexp'));
-// Returns: true
-util.isRegExp({});
-// Returns: false
-```
-
-### `util.isString(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use `typeof value === 'string'` instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is a `string`. Otherwise, returns `false`.
-
-```js
-const util = require('node:util');
-
-util.isString('');
-// Returns: true
-util.isString('foo');
-// Returns: true
-util.isString(String('foo'));
-// Returns: true
-util.isString(5);
-// Returns: false
-```
-
-### `util.isSymbol(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use `typeof value === 'symbol'` instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is a `Symbol`. Otherwise, returns `false`.
-
-```js
-const util = require('node:util');
-
-util.isSymbol(5);
-// Returns: false
-util.isSymbol('foo');
-// Returns: false
-util.isSymbol(Symbol('foo'));
-// Returns: true
-```
-
-### `util.isUndefined(object)`
-
-<!-- YAML
-added: v0.11.5
-deprecated: v4.0.0
--->
-
-> Stability: 0 - Deprecated: Use `value === undefined` instead.
-
-* `object` {any}
-* Returns: {boolean}
-
-Returns `true` if the given `object` is `undefined`. Otherwise, returns `false`.
-
-```js
-const util = require('node:util');
-
-const foo = undefined;
-util.isUndefined(5);
-// Returns: false
-util.isUndefined(foo);
-// Returns: true
-util.isUndefined(null);
-// Returns: false
-```
-
-### `util.log(string)`
-
-<!-- YAML
-added: v0.3.0
-deprecated: v6.0.0
--->
-
-> Stability: 0 - Deprecated: Use a third party module instead.
-
-* `string` {string}
-
-The `util.log()` method prints the given `string` to `stdout` with an included
-timestamp.
-
-```js
-const util = require('node:util');
-
-util.log('Timestamped message.');
-```
-
 [Common System Errors]: errors.md#common-system-errors
 [Custom inspection functions on objects]: #custom-inspection-functions-on-objects
 [Custom promisified functions]: #custom-promisified-functions
@@ -3243,10 +2986,8 @@ util.log('Timestamped message.');
 [`Array.isArray()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/isArray
 [`ArrayBuffer.isView()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer/isView
 [`ArrayBuffer`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer
-[`Buffer.isBuffer()`]: buffer.md#static-method-bufferisbufferobj
 [`DataView`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView
 [`Date`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date
-[`Error`]: errors.md#class-error
 [`Float32Array`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float32Array
 [`Float64Array`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float64Array
 [`Int16Array`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int16Array
@@ -3268,7 +3009,6 @@ util.log('Timestamped message.');
 [`Uint8ClampedArray`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8ClampedArray
 [`WeakMap`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakMap
 [`WeakSet`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakSet
-[`WebAssembly.Module`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module
 [`assert.deepStrictEqual()`]: assert.md#assertdeepstrictequalactual-expected-message
 [`console.error()`]: console.md#consoleerrordata-args
 [`mime.toString()`]: #mimetostring
@@ -3281,15 +3021,15 @@ util.log('Timestamped message.');
 [`util.promisify()`]: #utilpromisifyoriginal
 [`util.types.isAnyArrayBuffer()`]: #utiltypesisanyarraybuffervalue
 [`util.types.isArrayBuffer()`]: #utiltypesisarraybuffervalue
-[`util.types.isDate()`]: #utiltypesisdatevalue
-[`util.types.isNativeError()`]: #utiltypesisnativeerrorvalue
 [`util.types.isSharedArrayBuffer()`]: #utiltypesissharedarraybuffervalue
 [async function]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function
+[built-in `Error` type]: https://tc39.es/ecma262/#sec-error-objects
 [compare function]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort#Parameters
 [constructor]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/constructor
 [default sort]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort
 [global symbol registry]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol/for
 [list of deprecated APIS]: deprecations.md#list-of-deprecated-apis
-[pkgjs/parseargs]: https://github.com/pkgjs/parseargs
+[modifiers]: #modifiers
+[realm]: https://tc39.es/ecma262/#realm
 [semantically incompatible]: https://github.com/nodejs/node/issues/4179
 [util.inspect.custom]: #utilinspectcustom

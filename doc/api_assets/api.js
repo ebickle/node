@@ -2,11 +2,11 @@
 
 {
   function setupTheme() {
-    const kCustomPreference = 'customDarkTheme';
-    const userSettings = sessionStorage.getItem(kCustomPreference);
+    const storedTheme = localStorage.getItem('theme');
     const themeToggleButton = document.getElementById('theme-toggle-btn');
 
-    if (userSettings === null && window.matchMedia) {
+    // Follow operating system theme preference
+    if (storedTheme === null && window.matchMedia) {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
 
       if ('onchange' in mq) {
@@ -20,24 +20,18 @@
             function() {
               mq.removeEventListener('change', mqChangeListener);
             },
-            { once: true }
+            { once: true },
           );
         }
       }
-
-      if (mq.matches) {
-        document.documentElement.classList.add('dark-mode');
-      }
-    } else if (userSettings === 'true') {
-      document.documentElement.classList.add('dark-mode');
     }
 
     if (themeToggleButton) {
       themeToggleButton.hidden = false;
       themeToggleButton.addEventListener('click', function() {
-        sessionStorage.setItem(
-          kCustomPreference,
-          document.documentElement.classList.toggle('dark-mode')
+        localStorage.setItem(
+          'theme',
+          document.documentElement.classList.toggle('dark-mode') ? 'dark' : 'light',
         );
       });
     }
@@ -119,7 +113,7 @@
 
         header.classList.toggle('is-pinned', newStatus);
       },
-      { threshold: [1] }
+      { threshold: [1] },
     ).observe(header);
   }
 
@@ -134,6 +128,59 @@
 
     addEventListener('hashchange', updateHashes);
     updateHashes();
+  }
+
+  function setupFlavorToggles() {
+    const kFlavorPreference = 'customFlavor';
+    const flavorSetting = localStorage.getItem(kFlavorPreference) === 'true';
+    const flavorToggles = document.querySelectorAll('.js-flavor-toggle');
+
+    flavorToggles.forEach((toggleElement) => {
+      toggleElement.checked = flavorSetting;
+      toggleElement.addEventListener('change', (e) => {
+        const checked = e.target.checked;
+
+        if (checked) {
+          localStorage.setItem(kFlavorPreference, true);
+        } else {
+          localStorage.removeItem(kFlavorPreference);
+        }
+
+        flavorToggles.forEach((el) => {
+          el.checked = checked;
+        });
+      });
+    });
+  }
+
+  function setupCopyButton() {
+    const buttons = document.querySelectorAll('.copy-button');
+    buttons.forEach((button) => {
+      button.addEventListener('click', (el) => {
+        const parentNode = el.target.parentNode;
+
+        const flavorToggle = parentNode.querySelector('.js-flavor-toggle');
+
+        let code = '';
+
+        if (flavorToggle) {
+          if (flavorToggle.checked) {
+            code = parentNode.querySelector('.mjs').textContent;
+          } else {
+            code = parentNode.querySelector('.cjs').textContent;
+          }
+        } else {
+          code = parentNode.querySelector('code').textContent;
+        }
+
+        button.textContent = 'Copied';
+        navigator.clipboard.writeText(code);
+
+        setTimeout(() => {
+          button.textContent = 'Copy';
+        }, 2500);
+      });
+    });
   }
 
   function bootstrap() {
@@ -151,6 +198,10 @@
 
     // Make link to other versions of the doc open to the same hash target (if it exists).
     setupAltDocsLink();
+
+    setupFlavorToggles();
+
+    setupCopyButton();
   }
 
   if (document.readyState === 'loading') {

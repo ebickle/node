@@ -5,6 +5,10 @@
 #ifndef V8_DIAGNOSTICS_ETW_JIT_WIN_H_
 #define V8_DIAGNOSTICS_ETW_JIT_WIN_H_
 
+#include <atomic>
+
+#include "include/v8config.h"
+
 namespace v8 {
 
 class Isolate;
@@ -12,6 +16,8 @@ struct JitCodeEvent;
 
 namespace internal {
 namespace ETWJITInterface {
+extern std::atomic<bool> is_etw_enabled;
+
 void Register();
 void Unregister();
 void AddIsolate(Isolate* isolate);

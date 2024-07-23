@@ -10,9 +10,7 @@ onboarding session.
   possible to add them to the organization if they are not using two-factor
   authentication. If they cannot receive SMS messages from GitHub, try
   [using a TOTP mobile app][].
-* Announce the accepted nomination in a TSC meeting and in the TSC
-  mailing list.
-* Suggest the new Collaborator install [`node-core-utils`][] and
+* Suggest the new Collaborator install [`@node-core/utils`][] and
   [set up the credentials][] for it.
 
 ## Fifteen minutes before the onboarding session
@@ -58,7 +56,7 @@ onboarding session.
 
 The project has a venue for real-time discussion:
 
-* [`#nodejs-dev`](https://openjs-foundation.slack.com/archives/C019Y2T6STH) on
+* [`#nodejs-core`](https://openjs-foundation.slack.com/archives/C019Y2T6STH) on
   the [OpenJS Foundation Slack](https://slack-invite.openjsf.org/)
 
 ## Project goals and values
@@ -104,12 +102,22 @@ The project has a venue for real-time discussion:
 
 * When a discussion gets heated, you can request that other collaborators keep
   an eye on it by opening an issue at the private
-  [nodejs/moderation](https://github.com/nodejs/moderation) repository.
+  [nodejs/moderation](https://github.com/nodejs/moderation) repository. Note
+  that while that repository is not public, it can be accessed by anyone in the
+  nodejs org, so refrain from using it to report individuals (reporting
+  spam/bots there is fine of course).
   * This is a repository to which all members of the `nodejs` GitHub
     organization (not just collaborators on Node.js core) have access. Its
     contents should not be shared externally.
-  * You can find the full moderation policy
-    [here](https://github.com/nodejs/admin/blob/HEAD/Moderation-Policy.md).
+  * Node.js has a moderation team which you should contact when unsure
+    about taking action in the Node.js org.
+  * You can moderate non-collaborator posts yourself. Please
+    report the moderation action taken in accordance to the moderation
+    policy.
+  * You can always refer to the
+    [full moderation policy](https://github.com/nodejs/admin/blob/main/Moderation-Policy.md).
+  * You can contact someone in the
+    [full list of moderation team members](https://github.com/nodejs/moderation#moderation-team-members).
 
 ## Reviewing pull requests
 
@@ -225,7 +233,7 @@ needs to be pointed out separately during the onboarding.
   request.
   * Be sure to add the `PR-URL: <full-pr-url>` and appropriate `Reviewed-By:`
     metadata.
-  * [`node-core-utils`][] automates the generation of metadata and the landing
+  * [`@node-core/utils`][] automates the generation of metadata and the landing
     process. See the documentation of [`git-node`][].
   * [`core-validate-commit`][] automates the validation of commit messages.
     This will be run during `git node land --final` of the [`git-node`][]
@@ -255,10 +263,10 @@ needs to be pointed out separately during the onboarding.
 [Labels]: doc/contributing/collaborator-guide.md#labels
 [Landing pull requests]: doc/contributing/collaborator-guide.md#landing-pull-requests
 [Publicizing or hiding organization membership]: https://help.github.com/articles/publicizing-or-hiding-organization-membership/
+[`@node-core/utils`]: https://github.com/nodejs/node-core-utils
 [`author-ready`]: doc/contributing/collaborator-guide.md#author-ready-pull-requests
 [`core-validate-commit`]: https://github.com/nodejs/core-validate-commit
 [`git-node`]: https://github.com/nodejs/node-core-utils/blob/HEAD/docs/git-node.md
-[`node-core-utils`]: https://github.com/nodejs/node-core-utils
 [set up the credentials]: https://github.com/nodejs/node-core-utils#setting-up-github-credentials
 [static-analysis]: doc/contributing/static-analysis.md
 [two-factor authentication]: https://help.github.com/articles/securing-your-account-with-two-factor-authentication-2fa/

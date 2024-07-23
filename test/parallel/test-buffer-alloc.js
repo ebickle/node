@@ -4,13 +4,16 @@ const common = require('../common');
 const assert = require('assert');
 const vm = require('vm');
 
-const SlowBuffer = require('buffer').SlowBuffer;
+const {
+  SlowBuffer,
+  kMaxLength,
+} = require('buffer');
 
 // Verify the maximum Uint8Array size. There is no concrete limit by spec. The
 // internal limits should be updated if this fails.
 assert.throws(
-  () => new Uint8Array(2 ** 32 + 1),
-  { message: 'Invalid typed array length: 4294967297' }
+  () => new Uint8Array(kMaxLength + 1),
+  { message: `Invalid typed array length: ${kMaxLength + 1}` },
 );
 
 const b = Buffer.allocUnsafe(1024);
@@ -124,7 +127,7 @@ b.copy(Buffer.alloc(0), 1, 1, 1);
 b.copy(Buffer.alloc(1), 1, 1, 1);
 
 // Try to copy 0 bytes from past the end of the source buffer
-b.copy(Buffer.alloc(1), 0, 2048, 2048);
+b.copy(Buffer.alloc(1), 0, 1024, 1024);
 
 // Testing for smart defaults and ability to pass string values as offset
 {

@@ -311,7 +311,7 @@ void LibuvStreamWrap::GetWriteQueueSize(
 
 void LibuvStreamWrap::SetBlocking(const FunctionCallbackInfo<Value>& args) {
   LibuvStreamWrap* wrap;
-  ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&wrap, args.This());
 
   CHECK_GT(args.Length(), 0);
   if (!wrap->IsAlive())
@@ -415,7 +415,7 @@ void LibuvStreamWrap::AfterUvWrite(uv_write_t* req, int status) {
 
 }  // namespace node
 
-NODE_MODULE_CONTEXT_AWARE_INTERNAL(stream_wrap,
-                                   node::LibuvStreamWrap::Initialize)
-NODE_MODULE_EXTERNAL_REFERENCE(
+NODE_BINDING_CONTEXT_AWARE_INTERNAL(stream_wrap,
+                                    node::LibuvStreamWrap::Initialize)
+NODE_BINDING_EXTERNAL_REFERENCE(
     stream_wrap, node::LibuvStreamWrap::RegisterExternalReferences)

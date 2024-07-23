@@ -18,6 +18,24 @@ using v8::Object;
 using v8::String;
 using v8::Value;
 
+Maybe<bool> ProcessEmitWarningSync(Environment* env, const char* message) {
+  Isolate* isolate = env->isolate();
+  Local<Context> context = env->context();
+  Local<String> message_string = OneByteString(isolate, message);
+
+  Local<Value> argv[] = {message_string};
+  Local<Function> emit_function = env->process_emit_warning_sync();
+  // If this fails, this is called too early - before the bootstrap is even
+  // finished.
+  CHECK(!emit_function.IsEmpty());
+  if (emit_function.As<Function>()
+          ->Call(context, v8::Undefined(isolate), arraysize(argv), argv)
+          .IsEmpty()) {
+    return Nothing<bool>();
+  }
+  return Just(true);
+}
+
 MaybeLocal<Value> ProcessEmit(Environment* env,
                               const char* event,
                               Local<Value> message) {
@@ -92,8 +110,7 @@ Maybe<bool> ProcessEmitExperimentalWarning(Environment* env,
 
   experimental_warnings.insert(warning);
   std::string message(warning);
-  message.append(
-      " is an experimental feature. This feature could change at any time");
+  message.append(" is an experimental feature and might change at any time");
   return ProcessEmitWarningGeneric(env, message.c_str(), "ExperimentalWarning");
 }
 

@@ -43,7 +43,7 @@ class LazyCompileDispatcherTestFlags {
   static void SetFlagsForTest() {
     CHECK_NULL(save_flags_);
     save_flags_ = new SaveFlags();
-    FLAG_lazy_compile_dispatcher = true;
+    v8_flags.lazy_compile_dispatcher = true;
     FlagList::EnforceFlagImplications();
   }
 
@@ -211,26 +211,23 @@ class MockPlatform : public v8::Platform {
     return std::make_shared<MockForegroundTaskRunner>(this);
   }
 
-  void CallOnWorkerThread(std::unique_ptr<Task> task) override {
+  void PostTaskOnWorkerThreadImpl(TaskPriority priority,
+                                  std::unique_ptr<Task> task,
+                                  const SourceLocation& location) override {
     UNREACHABLE();
   }
 
-  void CallDelayedOnWorkerThread(std::unique_ptr<Task> task,
-                                 double delay_in_seconds) override {
+  void PostDelayedTaskOnWorkerThreadImpl(
+      TaskPriority priority, std::unique_ptr<Task> task,
+      double delay_in_seconds, const SourceLocation& location) override {
     UNREACHABLE();
   }
 
   bool IdleTasksEnabled(v8::Isolate* isolate) override { return true; }
 
-  std::unique_ptr<JobHandle> PostJob(
-      TaskPriority priority, std::unique_ptr<JobTask> job_task) override {
-    auto handle = deferred_post_job_.CreateJob(priority, std::move(job_task));
-    deferred_post_job_.NotifyConcurrencyIncrease();
-    return handle;
-  }
-
-  std::unique_ptr<JobHandle> CreateJob(
-      TaskPriority priority, std::unique_ptr<JobTask> job_task) override {
+  std::unique_ptr<JobHandle> CreateJobImpl(
+      TaskPriority priority, std::unique_ptr<JobTask> job_task,
+      const SourceLocation& location) override {
     return deferred_post_job_.CreateJob(priority, std::move(job_task));
   }
 
@@ -334,13 +331,13 @@ class MockPlatform : public v8::Platform {
 
 TEST_F(LazyCompileDispatcherTest, Construct) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
   dispatcher.AbortAll();
 }
 
 TEST_F(LazyCompileDispatcherTest, IsEnqueued) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);
@@ -360,7 +357,7 @@ TEST_F(LazyCompileDispatcherTest, IsEnqueued) {
 
 TEST_F(LazyCompileDispatcherTest, FinishNow) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);
@@ -379,7 +376,7 @@ TEST_F(LazyCompileDispatcherTest, FinishNow) {
 
 TEST_F(LazyCompileDispatcherTest, CompileAndFinalize) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);
@@ -407,7 +404,7 @@ TEST_F(LazyCompileDispatcherTest, CompileAndFinalize) {
 
 TEST_F(LazyCompileDispatcherTest, IdleTaskNoIdleTime) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);
@@ -458,7 +455,7 @@ TEST_F(LazyCompileDispatcherTest, IdleTaskNoIdleTime) {
 
 TEST_F(LazyCompileDispatcherTest, IdleTaskSmallIdleTime) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared_1 =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);
@@ -550,13 +547,13 @@ TEST_F(LazyCompileDispatcherTest, IdleTaskException) {
 
   ASSERT_FALSE(dispatcher.IsEnqueued(shared));
   ASSERT_FALSE(shared->is_compiled());
-  ASSERT_FALSE(i_isolate()->has_pending_exception());
+  ASSERT_FALSE(i_isolate()->has_exception());
   dispatcher.AbortAll();
 }
 
 TEST_F(LazyCompileDispatcherTest, FinishNowWithWorkerTask) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);
@@ -589,7 +586,7 @@ TEST_F(LazyCompileDispatcherTest, FinishNowWithWorkerTask) {
 
 TEST_F(LazyCompileDispatcherTest, IdleTaskMultipleJobs) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared_1 =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);
@@ -639,16 +636,16 @@ TEST_F(LazyCompileDispatcherTest, FinishNowException) {
 
   ASSERT_FALSE(dispatcher.IsEnqueued(shared));
   ASSERT_FALSE(shared->is_compiled());
-  ASSERT_TRUE(i_isolate()->has_pending_exception());
+  ASSERT_TRUE(i_isolate()->has_exception());
 
-  i_isolate()->clear_pending_exception();
+  i_isolate()->clear_exception();
   ASSERT_FALSE(platform.IdleTaskPending());
   dispatcher.AbortAll();
 }
 
 TEST_F(LazyCompileDispatcherTest, AbortJobNotStarted) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);
@@ -675,7 +672,7 @@ TEST_F(LazyCompileDispatcherTest, AbortJobNotStarted) {
 
 TEST_F(LazyCompileDispatcherTest, AbortJobAlreadyStarted) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);
@@ -789,7 +786,7 @@ TEST_F(LazyCompileDispatcherTest, CompileLazy2FinishesDispatcherJob) {
 
 TEST_F(LazyCompileDispatcherTest, CompileMultipleOnBackgroundThread) {
   MockPlatform platform;
-  LazyCompileDispatcher dispatcher(i_isolate(), &platform, FLAG_stack_size);
+  LazyCompileDispatcher dispatcher(i_isolate(), &platform, v8_flags.stack_size);
 
   Handle<SharedFunctionInfo> shared_1 =
       test::CreateSharedFunctionInfo(i_isolate(), nullptr);

@@ -1,22 +1,37 @@
 #include "node_metadata.h"
+#include "acorn_version.h"
+#include "ada.h"
 #include "ares.h"
 #include "brotli/encode.h"
+#include "cjs_module_lexer_version.h"
 #include "llhttp.h"
+#include "nbytes.h"
 #include "nghttp2/nghttp2ver.h"
 #include "node.h"
+#include "simdjson.h"
+#include "simdutf.h"
+#include "sqlite3.h"
+#include "undici_version.h"
 #include "util.h"
 #include "uv.h"
+#include "uvwasi.h"
 #include "v8.h"
-#include "zlib.h"
+
+#ifdef NODE_BUNDLED_ZLIB
+#include "zlib_version.h"
+#else
+#include <zlib.h>
+#endif  // NODE_BUNDLED_ZLIB
 
 #if HAVE_OPENSSL
-#include <openssl/opensslv.h>
+#include <openssl/crypto.h>
+#include "ncrypto.h"
 #if NODE_OPENSSL_HAS_QUIC
 #include <openssl/quic.h>
 #endif
 #endif  // HAVE_OPENSSL
 
-#ifdef OPENSSL_INFO_QUIC
+#ifdef NODE_OPENSSL_HAS_QUIC
 #include <ngtcp2/version.h>
 #include <nghttp3/version.h>
 #endif
@@ -42,9 +57,10 @@ static constexpr size_t search(const char* s, char c, size_t n = 0) {
 static inline std::string GetOpenSSLVersion() {
   // sample openssl version string format
   // for reference: "OpenSSL 1.1.0i 14 Aug 2018"
-  constexpr size_t start = search(OPENSSL_VERSION_TEXT, ' ') + 1;
-  constexpr size_t len = search(&OPENSSL_VERSION_TEXT[start], ' ');
-  return std::string(OPENSSL_VERSION_TEXT, start, len);
+  const char* version = OpenSSL_version(OPENSSL_VERSION);
+  const size_t start = search(version, ' ') + 1;
+  const size_t len = search(&version[start], ' ');
+  return std::string(version, start, len);
 }
 #endif  // HAVE_OPENSSL
 
@@ -71,11 +87,15 @@ Metadata::Versions::Versions() {
   node = NODE_VERSION_STRING;
   v8 = v8::V8::GetVersion();
   uv = uv_version_string();
+#ifdef NODE_BUNDLED_ZLIB
   zlib = ZLIB_VERSION;
+#else
+  zlib = zlibVersion();
+#endif  // NODE_BUNDLED_ZLIB
   ares = ARES_VERSION_STR;
   modules = NODE_STRINGIFY(NODE_MODULE_VERSION);
   nghttp2 = NGHTTP2_VERSION;
-  napi = NODE_STRINGIFY(NAPI_VERSION);
+  napi = NODE_STRINGIFY(NODE_API_SUPPORTED_VERSION_MAX);
   llhttp =
       NODE_STRINGIFY(LLHTTP_VERSION_MAJOR)
       "."
@@ -89,9 +109,17 @@ Metadata::Versions::Versions() {
     std::to_string((BrotliEncoderVersion() & 0xFFF000) >> 12) +
     "." +
     std::to_string(BrotliEncoderVersion() & 0xFFF);
+#ifndef NODE_SHARED_BUILTIN_UNDICI_UNDICI_PATH
+  undici = UNDICI_VERSION;
+#endif
+
+  acorn = ACORN_VERSION;
+  cjs_module_lexer = CJS_MODULE_LEXER_VERSION;
+  uvwasi = UVWASI_VERSION_STRING;
 
 #if HAVE_OPENSSL
   openssl = GetOpenSSLVersion();
+  ncrypto = NCRYPTO_VERSION;
 #endif
 
 #ifdef NODE_HAVE_I18N_SUPPORT
@@ -99,10 +127,16 @@ Metadata::Versions::Versions() {
   unicode = U_UNICODE_VERSION;
 #endif  // NODE_HAVE_I18N_SUPPORT
 
-#ifdef OPENSSL_INFO_QUIC
+#ifdef NODE_OPENSSL_HAS_QUIC
   ngtcp2 = NGTCP2_VERSION;
   nghttp3 = NGHTTP3_VERSION;
 #endif
+
+  simdjson = SIMDJSON_VERSION;
+  simdutf = SIMDUTF_VERSION;
+  sqlite = SQLITE_VERSION;
+  ada = ADA_VERSION;
+  nbytes = NBYTES_VERSION;
 }
 
 Metadata::Release::Release() : name(NODE_RELEASE) {
@@ -117,9 +151,7 @@ Metadata::Release::Release() : name(NODE_RELEASE) {
   source_url = NODE_RELEASE_URLFPFX ".tar.gz";
   headers_url = NODE_RELEASE_URLFPFX "-headers.tar.gz";
 #ifdef _WIN32
-  lib_url = strcmp(NODE_ARCH, "ia32") ? NODE_RELEASE_URLPFX "win-" NODE_ARCH
-                                                           "/node.lib"
-                                     : NODE_RELEASE_URLPFX "win-x86/node.lib";
+  lib_url = NODE_RELEASE_URLPFX "win-" NODE_ARCH "/node.lib";
 #endif  // _WIN32
 
 #endif  // NODE_HAS_RELEASE_URLS

@@ -100,6 +100,8 @@ void nghttp2_stream_init(nghttp2_stream *stream, int32_t stream_id,
   stream->descendant_next_seq = 0;
   stream->seq = 0;
   stream->last_writelen = 0;
+
+  stream->extpri = stream->http_extpri = NGHTTP2_EXTPRI_DEFAULT_URGENCY;
 }
 
 void nghttp2_stream_free(nghttp2_stream *stream) {
@@ -310,7 +312,7 @@ int32_t nghttp2_stream_dep_distributed_weight(nghttp2_stream *stream,
                                               int32_t weight) {
   weight = stream->weight * weight / stream->sum_dep_weight;
 
-  return nghttp2_max(1, weight);
+  return nghttp2_max_int32(1, weight);
 }
 
 #ifdef STREAM_DEP_DEBUG
@@ -463,14 +465,12 @@ static int stream_update_dep_on_attach_item(nghttp2_stream *stream) {
   return 0;
 }
 
-static int stream_update_dep_on_detach_item(nghttp2_stream *stream) {
+static void stream_update_dep_on_detach_item(nghttp2_stream *stream) {
   if (nghttp2_pq_empty(&stream->obq)) {
     stream_obq_remove(stream);
   }
 
   validate_tree(stream);
-
-  return 0;
 }
 
 int nghttp2_stream_attach_item(nghttp2_stream *stream,
@@ -483,6 +483,10 @@ int nghttp2_stream_attach_item(nghttp2_stream *stream,
   DEBUGF("stream: stream=%d attach item=%p\n", stream->stream_id, item);
 
   stream->item = item;
+
+  if (stream->flags & NGHTTP2_STREAM_FLAG_NO_RFC7540_PRIORITIES) {
+    return 0;
+  }
 
   rv = stream_update_dep_on_attach_item(stream);
   if (rv != 0) {
@@ -497,16 +501,20 @@ int nghttp2_stream_attach_item(nghttp2_stream *stream,
   return 0;
 }
 
-int nghttp2_stream_detach_item(nghttp2_stream *stream) {
+void nghttp2_stream_detach_item(nghttp2_stream *stream) {
   DEBUGF("stream: stream=%d detach item=%p\n", stream->stream_id, stream->item);
 
   stream->item = NULL;
   stream->flags = (uint8_t)(stream->flags & ~NGHTTP2_STREAM_FLAG_DEFERRED_ALL);
 
-  return stream_update_dep_on_detach_item(stream);
+  if (stream->flags & NGHTTP2_STREAM_FLAG_NO_RFC7540_PRIORITIES) {
+    return;
+  }
+
+  stream_update_dep_on_detach_item(stream);
 }
 
-int nghttp2_stream_defer_item(nghttp2_stream *stream, uint8_t flags) {
+void nghttp2_stream_defer_item(nghttp2_stream *stream, uint8_t flags) {
   assert(stream->item);
 
   DEBUGF("stream: stream=%d defer item=%p cause=%02x\n", stream->stream_id,
@@ -514,7 +522,11 @@ int nghttp2_stream_defer_item(nghttp2_stream *stream, uint8_t flags) {
 
   stream->flags |= flags;
 
-  return stream_update_dep_on_detach_item(stream);
+  if (stream->flags & NGHTTP2_STREAM_FLAG_NO_RFC7540_PRIORITIES) {
+    return;
+  }
+
+  stream_update_dep_on_detach_item(stream);
 }
 
 int nghttp2_stream_resume_deferred_item(nghttp2_stream *stream, uint8_t flags) {
@@ -526,6 +538,10 @@ int nghttp2_stream_resume_deferred_item(nghttp2_stream *stream, uint8_t flags) {
   stream->flags = (uint8_t)(stream->flags & ~flags);
 
   if (stream->flags & NGHTTP2_STREAM_FLAG_DEFERRED_ALL) {
+    return 0;
+  }
+
+  if (stream->flags & NGHTTP2_STREAM_FLAG_NO_RFC7540_PRIORITIES) {
     return 0;
   }
 

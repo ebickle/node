@@ -49,6 +49,7 @@
 #include "src/codegen/riscv/base-assembler-riscv.h"
 #include "src/codegen/riscv/base-riscv-i.h"
 #include "src/codegen/riscv/extension-riscv-a.h"
+#include "src/codegen/riscv/extension-riscv-b.h"
 #include "src/codegen/riscv/extension-riscv-c.h"
 #include "src/codegen/riscv/extension-riscv-d.h"
 #include "src/codegen/riscv/extension-riscv-f.h"
@@ -83,16 +84,16 @@ class Operand {
       : rm_(no_reg), rmode_(rmode) {
     value_.immediate = immediate;
   }
+
+  V8_INLINE explicit Operand(Tagged<Smi> value)
+      : Operand(static_cast<intptr_t>(value.ptr())) {}
+
   V8_INLINE explicit Operand(const ExternalReference& f)
       : rm_(no_reg), rmode_(RelocInfo::EXTERNAL_REFERENCE) {
     value_.immediate = static_cast<intptr_t>(f.address());
   }
 
   explicit Operand(Handle<HeapObject> handle);
-  V8_INLINE explicit Operand(Smi value)
-      : rm_(no_reg), rmode_(RelocInfo::NO_INFO) {
-    value_.immediate = static_cast<intptr_t>(value.ptr());
-  }
 
   static Operand EmbeddedNumber(double number);  // Smi or HeapNumber.
 
@@ -165,6 +166,7 @@ class V8_EXPORT_PRIVATE MemOperand : public Operand {
 class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
                                     public AssemblerRISCVI,
                                     public AssemblerRISCVA,
+                                    public AssemblerRISCVB,
                                     public AssemblerRISCVF,
                                     public AssemblerRISCVD,
                                     public AssemblerRISCVM,
@@ -188,12 +190,14 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
   // GetCode emits any pending (non-emitted) code and fills the descriptor desc.
   static constexpr int kNoHandlerTable = 0;
   static constexpr SafepointTableBuilder* kNoSafepointTable = nullptr;
-  void GetCode(Isolate* isolate, CodeDesc* desc,
+  void GetCode(LocalIsolate* isolate, CodeDesc* desc,
                SafepointTableBuilder* safepoint_table_builder,
                int handler_table_offset);
 
+  // Convenience wrapper for allocating with an Isolate.
+  void GetCode(Isolate* isolate, CodeDesc* desc);
   // Convenience wrapper for code without safepoint or handler tables.
-  void GetCode(Isolate* isolate, CodeDesc* desc) {
+  void GetCode(LocalIsolate* isolate, CodeDesc* desc) {
     GetCode(isolate, desc, kNoSafepointTable, kNoHandlerTable);
   }
 
@@ -239,6 +243,11 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
   // The high 8 bits are set to zero.
   void label_at_put(Label* L, int at_offset);
 
+  // During code generation builtin targets in PC-relative call/jump
+  // instructions are temporarily encoded as builtin ID until the generated
+  // code is moved into the code space.
+  static inline Builtin target_builtin_at(Address pc);
+
   // Read/Modify the code target address in the branch/call instruction at pc.
   // The isolate argument is unused (and may be nullptr) when skipping flushing.
   static Address target_address_at(Address pc);
@@ -280,8 +289,9 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
   // This sets the branch destination (which gets loaded at the call address).
   // This is for calls and branches within generated code.  The serializer
   // has already deserialized the lui/ori instructions etc.
-  inline static void deserialization_set_special_target_at(
-      Address instruction_payload, Code code, Address target);
+  inline static void deserialization_set_special_target_at(Address location,
+                                                           Tagged<Code> code,
+                                                           Address target);
 
   // Get the size of the special target encoded at 'instruction_payload'.
   inline static int deserialization_special_target_size(
@@ -294,10 +304,10 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
 
   // Here we are patching the address in the LUI/ADDI instruction pair.
   // These values are used in the serialization process and must be zero for
-  // RISC-V platform, as Code, Embedded Object or External-reference pointers
-  // are split across two consecutive instructions and don't exist separately
-  // in the code, so the serializer should not step forwards in memory after
-  // a target is resolved and written.
+  // RISC-V platform, as InstructionStream, Embedded Object or
+  // External-reference pointers are split across two consecutive instructions
+  // and don't exist separately in the code, so the serializer should not step
+  // forwards in memory after a target is resolved and written.
   static constexpr int kSpecialTargetSize = 0;
 
   // Number of consecutive instructions used to store 32bit/64bit constant.
@@ -334,7 +344,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
   RegList* GetScratchRegisterList() { return &scratch_register_list_; }
 
   // ---------------------------------------------------------------------------
-  // Code generation.
+  // InstructionStream generation.
 
   // Insert the smallest number of nop instructions
   // possible to align the pc offset to a multiple
@@ -366,9 +376,21 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
 
   // Assembler Pseudo Instructions (Tables 25.2, 25.3, RISC-V Unprivileged ISA)
   void nop();
+#if defined(V8_TARGET_ARCH_RISCV64)
+  void RecursiveLiImpl(Register rd, intptr_t imm);
+  void RecursiveLi(Register rd, intptr_t imm);
+  static int RecursiveLiCount(intptr_t imm);
+  static int RecursiveLiImplCount(intptr_t imm);
   void RV_li(Register rd, intptr_t imm);
+  static int RV_li_count(int64_t imm, bool is_get_temp_reg = false);
   // Returns the number of instructions required to load the immediate
-  static int li_estimate(intptr_t imm, bool is_get_temp_reg = false);
+  void GeneralLi(Register rd, int64_t imm);
+  static int GeneralLiCount(intptr_t imm, bool is_get_temp_reg = false);
+#endif
+#if defined(V8_TARGET_ARCH_RISCV32)
+  void RV_li(Register rd, int32_t imm);
+  static int RV_li_count(int32_t imm, bool is_get_temp_reg = false);
+#endif
   // Loads an immediate, always using 8 instructions, regardless of the value,
   // so that it can be modified later.
   void li_constant(Register rd, intptr_t imm);
@@ -407,6 +429,24 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
     DISALLOW_IMPLICIT_CONSTRUCTORS(BlockTrampolinePoolScope);
   };
 
+  class V8_NODISCARD BlockPoolsScope {
+   public:
+    // Block Trampoline Pool and Constant Pool. Emits pools if necessary to
+    // ensure that {margin} more bytes can be emitted without triggering pool
+    // emission.
+    explicit BlockPoolsScope(Assembler* assem, size_t margin = 0)
+        : block_const_pool_(assem, margin), block_trampoline_pool_(assem) {}
+
+    BlockPoolsScope(Assembler* assem, PoolEmissionCheck check)
+        : block_const_pool_(assem, check), block_trampoline_pool_(assem) {}
+    ~BlockPoolsScope() {}
+
+   private:
+    BlockConstPoolScope block_const_pool_;
+    BlockTrampolinePoolScope block_trampoline_pool_;
+    DISALLOW_IMPLICIT_CONSTRUCTORS(BlockPoolsScope);
+  };
+
   // Class for postponing the assembly buffer growth. Typically used for
   // sequences of instructions that must be emitted as a unit, before
   // buffer growth (and relocation) can occur.
@@ -437,14 +477,16 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
   // Writes a single byte or word of data in the code stream.  Used for
   // inline tables, e.g., jump-tables.
   void db(uint8_t data);
-  void dd(uint32_t data, RelocInfo::Mode rmode = RelocInfo::NO_INFO);
-  void dq(uint64_t data, RelocInfo::Mode rmode = RelocInfo::NO_INFO);
-  void dp(uintptr_t data, RelocInfo::Mode rmode = RelocInfo::NO_INFO) {
-    dq(data, rmode);
-  }
+  void dd(uint32_t data);
+  void dq(uint64_t data);
+  void dp(uintptr_t data) { dq(data); }
   void dd(Label* label);
 
   Instruction* pc() const { return reinterpret_cast<Instruction*>(pc_); }
+
+  Instruction* InstructionAt(ptrdiff_t offset) const {
+    return reinterpret_cast<Instruction*>(buffer_start_ + offset);
+  }
 
   // Postpone the generation of the trampoline pool for the specified number of
   // instructions.
@@ -487,8 +529,6 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
       Address pc_) const;
 
   inline int UnboundLabelsCount() { return unbound_labels_count_; }
-
-  using BlockPoolsScope = BlockTrampolinePoolScope;
 
   void RecordConstPool(int size);
 
@@ -580,15 +620,22 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
       }
     }
 
+    void clear() {
+      sew_ = kVsInvalid;
+      lmul_ = kVlInvalid;
+    }
+
    private:
-    VSew sew_ = E8;
-    Vlmul lmul_ = m1;
+    VSew sew_ = kVsInvalid;
+    Vlmul lmul_ = kVlInvalid;
     int32_t vl = 0;
     Assembler* assm_;
     FPURoundingMode mode_ = RNE;
   };
 
   VectorUnit VU;
+
+  void ClearVectorunit() { VU.clear(); }
 
  protected:
   // Readable constants for base and offset adjustment helper, these indicate if
@@ -676,7 +723,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
   // intervals of kBufferCheckInterval emitted bytes.
   static constexpr int kBufferCheckInterval = 1 * KB / 2;
 
-  // Code generation.
+  // InstructionStream generation.
   // The relocation writer's position is at least kGap bytes below the end of
   // the generated instructions. This is so that multi-instruction sequences do
   // not have to check for overflow. The same is true for writes of large
@@ -711,7 +758,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
   // The bound position, before this we cannot do instruction elimination.
   int last_bound_pos_;
 
-  // Code emission.
+  // InstructionStream emission.
   inline void CheckBuffer();
   void GrowBuffer();
   void emit(Instr x);
@@ -720,7 +767,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
   template <typename T>
   inline void EmitHelper(T x);
 
-  static void disassembleInstr(Instr instr);
+  static void disassembleInstr(uint8_t* pc);
 
   // Labels.
   void print(const Label* L);
@@ -800,7 +847,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase,
  private:
   ConstantPool constpool_;
 
-  void AllocateAndInstallRequestedHeapNumbers(Isolate* isolate);
+  void AllocateAndInstallRequestedHeapNumbers(LocalIsolate* isolate);
 
   int WriteCodeComments();
 
@@ -816,12 +863,33 @@ class EnsureSpace {
   explicit inline EnsureSpace(Assembler* assembler);
 };
 
+// This scope utility allows scratch registers to be managed safely. The
+// Assembler's GetScratchRegisterList() is used as a pool of scratch
+// registers. These registers can be allocated on demand, and will be returned
+// at the end of the scope.
+//
+// When the scope ends, the Assembler's list will be restored to its original
+// state, even if the list is modified by some other means. Note that this scope
+// can be nested but the destructors need to run in the opposite order as the
+// constructors. We do not have assertions for this.
 class V8_EXPORT_PRIVATE UseScratchRegisterScope {
  public:
-  explicit UseScratchRegisterScope(Assembler* assembler);
-  ~UseScratchRegisterScope();
+  explicit UseScratchRegisterScope(Assembler* assembler)
+      : available_(assembler->GetScratchRegisterList()),
+        old_available_(*available_) {}
 
-  Register Acquire();
+  ~UseScratchRegisterScope() { *available_ = old_available_; }
+
+  // Take a register from the list and return it.
+  Register Acquire() {
+    DCHECK_NOT_NULL(available_);
+    DCHECK(!available_->is_empty());
+    int index =
+        static_cast<int>(base::bits::CountTrailingZeros32(available_->bits()));
+    *available_ &= RegList::FromBits(~(1U << index));
+
+    return Register::from_code(index);
+  }
   bool hasAvailable() const;
   void Include(const RegList& list) { *available_ |= list; }
   void Exclude(const RegList& list) {

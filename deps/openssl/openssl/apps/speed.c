@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2023 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -67,6 +67,7 @@
 #  define HAVE_FORK 0
 # else
 #  define HAVE_FORK 1
+#  include <sys/wait.h>
 # endif
 #endif
 
@@ -875,11 +876,14 @@ static int FFDH_derive_key_loop(void *args)
     loopargs_t *tempargs = *(loopargs_t **) args;
     EVP_PKEY_CTX *ffdh_ctx = tempargs->ffdh_ctx[testnum];
     unsigned char *derived_secret = tempargs->secret_ff_a;
-    size_t outlen = MAX_FFDH_SIZE;
     int count;
 
-    for (count = 0; COND(ffdh_c[testnum][0]); count++)
+    for (count = 0; COND(ffdh_c[testnum][0]); count++) {
+        /* outlen can be overwritten with a too small value (no padding used) */
+        size_t outlen = MAX_FFDH_SIZE;
+
         EVP_PKEY_derive(ffdh_ctx, derived_secret, &outlen);
+    }
     return count;
 }
 #endif /* OPENSSL_NO_DH */
@@ -1001,6 +1005,13 @@ static int EdDSA_sign_loop(void *args)
     int ret, count;
 
     for (count = 0; COND(eddsa_c[testnum][0]); count++) {
+        ret = EVP_DigestSignInit(edctx[testnum], NULL, NULL, NULL, NULL);
+        if (ret == 0) {
+            BIO_printf(bio_err, "EdDSA sign init failure\n");
+            ERR_print_errors(bio_err);
+            count = -1;
+            break;
+        }
         ret = EVP_DigestSign(edctx[testnum], eddsasig, eddsasigsize, buf, 20);
         if (ret == 0) {
             BIO_printf(bio_err, "EdDSA sign failure\n");
@@ -1022,6 +1033,13 @@ static int EdDSA_verify_loop(void *args)
     int ret, count;
 
     for (count = 0; COND(eddsa_c[testnum][1]); count++) {
+        ret = EVP_DigestVerifyInit(edctx[testnum], NULL, NULL, NULL, NULL);
+        if (ret == 0) {
+            BIO_printf(bio_err, "EdDSA verify init failure\n");
+            ERR_print_errors(bio_err);
+            count = -1;
+            break;
+        }
         ret = EVP_DigestVerify(edctx[testnum], eddsasig, eddsasigsize, buf, 20);
         if (ret != 1) {
             BIO_printf(bio_err, "EdDSA verify failure\n");
@@ -2004,7 +2022,7 @@ int speed_main(int argc, char **argv)
                 goto end;
 
             if (!EVP_MAC_CTX_set_params(loopargs[i].mctx, params))
-                goto end;
+                goto skip_hmac; /* Digest not found */
         }
         for (testnum = 0; testnum < size_num; testnum++) {
             print_message(names[D_HMAC], c[D_HMAC][testnum], lengths[testnum],
@@ -2021,7 +2039,7 @@ int speed_main(int argc, char **argv)
         EVP_MAC_free(mac);
         mac = NULL;
     }
-
+skip_hmac:
     if (doit[D_CBC_DES]) {
         int st = 1;
 
@@ -2620,11 +2638,11 @@ int speed_main(int argc, char **argv)
              * code, for maximum performance.
              */
             if ((test_ctx = EVP_PKEY_CTX_new(key_B, NULL)) == NULL /* test ctx from skeyB */
-                || !EVP_PKEY_derive_init(test_ctx) /* init derivation test_ctx */
-                || !EVP_PKEY_derive_set_peer(test_ctx, key_A) /* set peer pubkey in test_ctx */
-                || !EVP_PKEY_derive(test_ctx, NULL, &test_outlen) /* determine max length */
-                || !EVP_PKEY_derive(ctx, loopargs[i].secret_a, &outlen) /* compute a*B */
-                || !EVP_PKEY_derive(test_ctx, loopargs[i].secret_b, &test_outlen) /* compute b*A */
+                || EVP_PKEY_derive_init(test_ctx) <= 0 /* init derivation test_ctx */
+                || EVP_PKEY_derive_set_peer(test_ctx, key_A) <= 0 /* set peer pubkey in test_ctx */
+                || EVP_PKEY_derive(test_ctx, NULL, &test_outlen) <= 0 /* determine max length */
+                || EVP_PKEY_derive(ctx, loopargs[i].secret_a, &outlen) <= 0 /* compute a*B */
+                || EVP_PKEY_derive(test_ctx, loopargs[i].secret_b, &test_outlen) <= 0 /* compute b*A */
                 || test_outlen != outlen /* compare output length */) {
                 ecdh_checks = 0;
                 BIO_printf(bio_err, "ECDH computation failure.\n");
@@ -3055,10 +3073,10 @@ int speed_main(int argc, char **argv)
                 ffdh_checks = 0;
                 break;
             }
-            if (!EVP_PKEY_derive_init(test_ctx) ||
-                !EVP_PKEY_derive_set_peer(test_ctx, pkey_A) ||
-                !EVP_PKEY_derive(test_ctx, NULL, &test_out) ||
-                !EVP_PKEY_derive(test_ctx, loopargs[i].secret_ff_b, &test_out) ||
+            if (EVP_PKEY_derive_init(test_ctx) <= 0 ||
+                EVP_PKEY_derive_set_peer(test_ctx, pkey_A) <= 0 ||
+                EVP_PKEY_derive(test_ctx, NULL, &test_out) <= 0 ||
+                EVP_PKEY_derive(test_ctx, loopargs[i].secret_ff_b, &test_out) <= 0 ||
                 test_out != secret_size) {
                 BIO_printf(bio_err, "FFDH computation failure.\n");
                 op_count = 1;
@@ -3129,12 +3147,22 @@ int speed_main(int argc, char **argv)
     }
 
     for (k = 0; k < ALGOR_NUM; k++) {
+        const char *alg_name = names[k];
+
         if (!doit[k])
             continue;
+
+        if (k == D_EVP) {
+            if (evp_cipher == NULL)
+                alg_name = evp_md_name;
+            else if ((alg_name = EVP_CIPHER_get0_name(evp_cipher)) == NULL)
+                app_bail_out("failed to get name of cipher '%s'\n", evp_cipher);
+        }
+
         if (mr)
-            printf("+F:%u:%s", k, names[k]);
+            printf("+F:%u:%s", k, alg_name);
         else
-            printf("%-13s", names[k]);
+            printf("%-13s", alg_name);
         for (testnum = 0; testnum < size_num; testnum++) {
             if (results[k][testnum] > 10000 && !mr)
                 printf(" %11.2fk", results[k][testnum] / 1e3);
@@ -3416,6 +3444,7 @@ static int do_multi(int multi, int size_num)
     int n;
     int fd[2];
     int *fds;
+    int status;
     static char sep[] = ":";
 
     fds = app_malloc(sizeof(*fds) * multi, "fd buffer for do_multi");
@@ -3451,7 +3480,12 @@ static int do_multi(int multi, int size_num)
         char buf[1024];
         char *p;
 
-        f = fdopen(fds[n], "r");
+        if ((f = fdopen(fds[n], "r")) == NULL) {
+            BIO_printf(bio_err, "fdopen failure with 0x%x\n",
+                       errno);
+            OPENSSL_free(fds);
+            return 1;
+        }
         while (fgets(buf, sizeof(buf), f)) {
             p = strchr(buf, '\n');
             if (p)
@@ -3574,6 +3608,20 @@ static int do_multi(int multi, int size_num)
         fclose(f);
     }
     OPENSSL_free(fds);
+    for (n = 0; n < multi; ++n) {
+        while (wait(&status) == -1)
+            if (errno != EINTR) {
+                BIO_printf(bio_err, "Waitng for child failed with 0x%x\n",
+                           errno);
+                return 1;
+            }
+        if (WIFEXITED(status) && WEXITSTATUS(status)) {
+            BIO_printf(bio_err, "Child exited with %d\n", WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            BIO_printf(bio_err, "Child terminated by signal %d\n",
+                       WTERMSIG(status));
+        }
+    }
     return 1;
 }
 #endif
@@ -3652,7 +3700,8 @@ static void multiblock_speed(const EVP_CIPHER *evp_cipher, int lengths_single,
             } else {
                 int pad;
 
-                RAND_bytes(out, 16);
+                if (RAND_bytes(inp, 16) <= 0)
+                    app_bail_out("error setting random bytes\n");
                 len += 16;
                 aad[11] = (unsigned char)(len >> 8);
                 aad[12] = (unsigned char)(len);

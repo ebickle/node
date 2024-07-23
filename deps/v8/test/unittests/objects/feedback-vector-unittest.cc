@@ -85,8 +85,8 @@ TEST_F(FeedbackVectorTest, VectorStructure) {
     spec.AddForInSlot();
     vector = NewFeedbackVector(isolate, &spec);
     FeedbackVectorHelper helper(vector);
-    FeedbackCell cell = *vector->GetClosureFeedbackCell(0);
-    CHECK_EQ(cell.value(), *factory->undefined_value());
+    Tagged<FeedbackCell> cell = vector->closure_feedback_cell(0);
+    CHECK_EQ(cell->value(), *factory->undefined_value());
   }
 }
 
@@ -121,7 +121,7 @@ TEST_F(FeedbackVectorTest, VectorICMetadata) {
 
   // Meanwhile set some feedback values and type feedback values to
   // verify the data structure remains intact.
-  vector->SynchronizedSet(FeedbackSlot(0), MaybeObject::FromObject(*vector));
+  vector->SynchronizedSet(FeedbackSlot(0), *vector);
 
   // Verify the metadata is correctly set up from the spec.
   for (int i = 0; i < 40; i++) {
@@ -144,9 +144,9 @@ TEST_F(FeedbackVectorTest, VectorICMetadata) {
 }
 
 TEST_F(FeedbackVectorTest, VectorCallICStates) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -167,15 +167,15 @@ TEST_F(FeedbackVectorTest, VectorCallICStates) {
   CHECK_EQ(InlineCacheState::GENERIC, nexus.ic_state());
 
   // After a collection, state should remain GENERIC.
-  CollectAllGarbage();
+  InvokeMajorGC();
   CHECK_EQ(InlineCacheState::GENERIC, nexus.ic_state());
 }
 
 // Test the Call IC states transfer with Function.prototype.apply
 TEST_F(FeedbackVectorTest, VectorCallICStateApply) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -194,8 +194,8 @@ TEST_F(FeedbackVectorTest, VectorCallICStateApply) {
   FeedbackNexus nexus(feedback_vector, slot);
   CHECK_EQ(InlineCacheState::MONOMORPHIC, nexus.ic_state());
   CHECK_EQ(CallFeedbackContent::kReceiver, nexus.GetCallFeedbackContent());
-  HeapObject heap_object;
-  CHECK(nexus.GetFeedback()->GetHeapObjectIfWeak(&heap_object));
+  Tagged<HeapObject> heap_object;
+  CHECK(nexus.GetFeedback().GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(*F, heap_object);
 
   TryRunJS(
@@ -203,7 +203,7 @@ TEST_F(FeedbackVectorTest, VectorCallICStateApply) {
       "foo();");
   CHECK_EQ(InlineCacheState::MONOMORPHIC, nexus.ic_state());
   CHECK_EQ(CallFeedbackContent::kTarget, nexus.GetCallFeedbackContent());
-  CHECK(nexus.GetFeedback()->GetHeapObjectIfWeak(&heap_object));
+  CHECK(nexus.GetFeedback().GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(*isolate->function_prototype_apply(), heap_object);
 
   TryRunJS(
@@ -213,9 +213,9 @@ TEST_F(FeedbackVectorTest, VectorCallICStateApply) {
 }
 
 TEST_F(FeedbackVectorTest, VectorCallFeedback) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -233,20 +233,20 @@ TEST_F(FeedbackVectorTest, VectorCallFeedback) {
   FeedbackNexus nexus(feedback_vector, slot);
 
   CHECK_EQ(InlineCacheState::MONOMORPHIC, nexus.ic_state());
-  HeapObject heap_object;
-  CHECK(nexus.GetFeedback()->GetHeapObjectIfWeak(&heap_object));
+  Tagged<HeapObject> heap_object;
+  CHECK(nexus.GetFeedback().GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(*foo, heap_object);
 
-  CollectAllGarbage();
+  InvokeMajorGC();
   // It should stay monomorphic even after a GC.
   CHECK_EQ(InlineCacheState::MONOMORPHIC, nexus.ic_state());
 }
 
 TEST_F(FeedbackVectorTest, VectorPolymorphicCallFeedback) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
-  FLAG_lazy_feedback_allocation = false;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
+  v8_flags.lazy_feedback_allocation = false;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -265,18 +265,18 @@ TEST_F(FeedbackVectorTest, VectorPolymorphicCallFeedback) {
   FeedbackNexus nexus(feedback_vector, slot);
 
   CHECK_EQ(InlineCacheState::POLYMORPHIC, nexus.ic_state());
-  HeapObject heap_object;
-  CHECK(nexus.GetFeedback()->GetHeapObjectIfWeak(&heap_object));
-  CHECK(heap_object.IsFeedbackCell(isolate));
+  Tagged<HeapObject> heap_object;
+  CHECK(nexus.GetFeedback().GetHeapObjectIfWeak(&heap_object));
+  CHECK(IsFeedbackCell(heap_object, isolate));
   // Ensure this is the feedback cell for the closure returned by
   // foo_maker.
   CHECK_EQ(heap_object, a_foo->raw_feedback_cell());
 }
 
 TEST_F(FeedbackVectorTest, VectorCallFeedbackForArray) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -293,19 +293,19 @@ TEST_F(FeedbackVectorTest, VectorCallFeedbackForArray) {
   FeedbackNexus nexus(feedback_vector, slot);
 
   CHECK_EQ(InlineCacheState::MONOMORPHIC, nexus.ic_state());
-  HeapObject heap_object;
-  CHECK(nexus.GetFeedback()->GetHeapObjectIfWeak(&heap_object));
+  Tagged<HeapObject> heap_object;
+  CHECK(nexus.GetFeedback().GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(*isolate->array_function(), heap_object);
 
-  CollectAllGarbage();
+  InvokeMajorGC();
   // It should stay monomorphic even after a GC.
   CHECK_EQ(InlineCacheState::MONOMORPHIC, nexus.ic_state());
 }
 
 TEST_F(FeedbackVectorTest, VectorCallCounts) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -334,9 +334,9 @@ TEST_F(FeedbackVectorTest, VectorCallCounts) {
 }
 
 TEST_F(FeedbackVectorTest, VectorConstructCounts) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -354,7 +354,7 @@ TEST_F(FeedbackVectorTest, VectorConstructCounts) {
   FeedbackNexus nexus(feedback_vector, slot);
   CHECK_EQ(InlineCacheState::MONOMORPHIC, nexus.ic_state());
 
-  CHECK(feedback_vector->Get(slot)->IsWeak());
+  CHECK(feedback_vector->Get(slot).IsWeak());
 
   TryRunJS("f(Foo); f(Foo);");
   CHECK_EQ(InlineCacheState::MONOMORPHIC, nexus.ic_state());
@@ -367,9 +367,9 @@ TEST_F(FeedbackVectorTest, VectorConstructCounts) {
 }
 
 TEST_F(FeedbackVectorTest, VectorSpeculationMode) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -401,11 +401,11 @@ TEST_F(FeedbackVectorTest, VectorSpeculationMode) {
 }
 
 TEST_F(FeedbackVectorTest, VectorCallSpeculationModeAndFeedbackContent) {
-  if (!i::FLAG_use_ic) return;
-  if (!i::FLAG_turbofan) return;
-  if (i::FLAG_always_turbofan) return;
-  if (i::FLAG_jitless) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (!i::v8_flags.turbofan) return;
+  if (i::v8_flags.always_turbofan) return;
+  if (i::v8_flags.jitless) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -436,9 +436,9 @@ TEST_F(FeedbackVectorTest, VectorCallSpeculationModeAndFeedbackContent) {
 }
 
 TEST_F(FeedbackVectorTest, VectorLoadICStates) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -484,14 +484,14 @@ TEST_F(FeedbackVectorTest, VectorLoadICStates) {
   CHECK(nexus.GetFirstMap().is_null());
 
   // After a collection, state should not be reset to PREMONOMORPHIC.
-  CollectAllGarbage();
+  InvokeMajorGC();
   CHECK_EQ(InlineCacheState::MEGAMORPHIC, nexus.ic_state());
 }
 
 TEST_F(FeedbackVectorTest, VectorLoadGlobalICSlotSharing) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -525,9 +525,9 @@ TEST_F(FeedbackVectorTest, VectorLoadGlobalICSlotSharing) {
 }
 
 TEST_F(FeedbackVectorTest, VectorLoadICOnSmi) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -546,7 +546,7 @@ TEST_F(FeedbackVectorTest, VectorLoadICOnSmi) {
   FeedbackNexus nexus(feedback_vector, slot);
   CHECK_EQ(InlineCacheState::MONOMORPHIC, nexus.ic_state());
   // Verify that the monomorphic map is the one we expect.
-  Map number_map = ReadOnlyRoots(heap).heap_number_map();
+  Tagged<Map> number_map = ReadOnlyRoots(heap).heap_number_map();
   CHECK_EQ(number_map, nexus.GetFirstMap());
 
   // Now go polymorphic on o.
@@ -581,9 +581,9 @@ TEST_F(FeedbackVectorTest, VectorLoadICOnSmi) {
 }
 
 TEST_F(FeedbackVectorTest, ReferenceContextAllocatesNoSlots) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
   Isolate* isolate = i_isolate();
@@ -725,9 +725,9 @@ TEST_F(FeedbackVectorTest, ReferenceContextAllocatesNoSlots) {
 }
 
 TEST_F(FeedbackVectorTest, VectorStoreICBasic) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
 
@@ -751,9 +751,9 @@ TEST_F(FeedbackVectorTest, VectorStoreICBasic) {
 }
 
 TEST_F(FeedbackVectorTest, DefineNamedOwnIC) {
-  if (!i::FLAG_use_ic) return;
-  if (i::FLAG_always_turbofan) return;
-  FLAG_allow_natives_syntax = true;
+  if (!i::v8_flags.use_ic) return;
+  if (i::v8_flags.always_turbofan) return;
+  v8_flags.allow_natives_syntax = true;
 
   v8::HandleScope scope(v8_isolate());
 

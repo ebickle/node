@@ -39,13 +39,14 @@ class MovableReferences final {
   using MovableReference = CompactionWorklists::MovableReference;
 
  public:
-  explicit MovableReferences(HeapBase& heap) : heap_(heap) {}
+  explicit MovableReferences(HeapBase& heap)
+      : heap_(heap), heap_has_move_listeners_(heap.HasMoveListeners()) {}
 
   // Adds a slot for compaction. Filters slots in dead objects.
   void AddOrFilter(MovableReference*);
 
   // Relocates a backing store |from| -> |to|.
-  void Relocate(Address from, Address to);
+  void Relocate(Address from, Address to, size_t size_including_header);
 
   // Relocates interior slots in a backing store that is moved |from| -> |to|.
   void RelocateInteriorReferences(Address from, Address to, size_t size);
@@ -69,6 +70,8 @@ class MovableReferences final {
   // - The initial value for a given key is nullptr.
   // - Upon moving an object this value is adjusted accordingly.
   std::map<MovableReference*, Address> interior_movable_references_;
+
+  const bool heap_has_move_listeners_;
 
 #if DEBUG
   // The following two collections are used to allow refer back from a slot to
@@ -134,10 +137,17 @@ void MovableReferences::AddOrFilter(MovableReference* slot) {
 #endif  // DEBUG
 }
 
-void MovableReferences::Relocate(Address from, Address to) {
+void MovableReferences::Relocate(Address from, Address to,
+                                 size_t size_including_header) {
 #if DEBUG
   moved_objects_.insert(from);
 #endif  // DEBUG
+
+  if (V8_UNLIKELY(heap_has_move_listeners_)) {
+    heap_.CallMoveListeners(from - sizeof(HeapObjectHeader),
+                            to - sizeof(HeapObjectHeader),
+                            size_including_header);
+  }
 
   // Interior slots always need to be processed for moved objects.
   // Consider an object A with slot A.x pointing to value B where A is
@@ -257,7 +267,8 @@ class CompactionState final {
       else
         memcpy(compact_frontier, header, size);
       movable_references_.Relocate(header + sizeof(HeapObjectHeader),
-                                   compact_frontier + sizeof(HeapObjectHeader));
+                                   compact_frontier + sizeof(HeapObjectHeader),
+                                   size);
     }
     current_page_->object_start_bitmap().SetBit(compact_frontier);
     used_bytes_in_current_page_ += size;
@@ -273,11 +284,10 @@ class CompactionState final {
       ReturnCurrentPageToSpace();
     }
 
-    // Return remaining available pages to the free page pool, decommitting
-    // them from the pagefile.
+    // Return remaining available pages back to the backend.
     for (NormalPage* page : available_pages_) {
       SetMemoryInaccessible(page->PayloadStart(), page->PayloadSize());
-      NormalPage::Destroy(page);
+      NormalPage::Destroy(page, FreeMemoryHandling::kDiscardWherePossible);
     }
   }
 
@@ -452,13 +462,11 @@ Compactor::Compactor(RawHeap& heap) : heap_(heap) {
   }
 }
 
-bool Compactor::ShouldCompact(
-    GarbageCollector::Config::MarkingType marking_type,
-    GarbageCollector::Config::StackState stack_state) const {
+bool Compactor::ShouldCompact(GCConfig::MarkingType marking_type,
+                              StackState stack_state) const {
   if (compactable_spaces_.empty() ||
-      (marking_type == GarbageCollector::Config::MarkingType::kAtomic &&
-       stack_state ==
-           GarbageCollector::Config::StackState::kMayContainHeapPointers)) {
+      (marking_type == GCConfig::MarkingType::kAtomic &&
+       stack_state == StackState::kMayContainHeapPointers)) {
     // The following check ensures that tests that want to test compaction are
     // not interrupted by garbage collections that cannot use compaction.
     DCHECK(!enable_for_next_gc_for_testing_);
@@ -474,9 +482,8 @@ bool Compactor::ShouldCompact(
   return free_list_size > kFreeListSizeThreshold;
 }
 
-void Compactor::InitializeIfShouldCompact(
-    GarbageCollector::Config::MarkingType marking_type,
-    GarbageCollector::Config::StackState stack_state) {
+void Compactor::InitializeIfShouldCompact(GCConfig::MarkingType marking_type,
+                                          StackState stack_state) {
   DCHECK(!is_enabled_);
 
   if (!ShouldCompact(marking_type, stack_state)) return;
@@ -487,9 +494,8 @@ void Compactor::InitializeIfShouldCompact(
   is_cancelled_ = false;
 }
 
-void Compactor::CancelIfShouldNotCompact(
-    GarbageCollector::Config::MarkingType marking_type,
-    GarbageCollector::Config::StackState stack_state) {
+void Compactor::CancelIfShouldNotCompact(GCConfig::MarkingType marking_type,
+                                         StackState stack_state) {
   if (!is_enabled_ || ShouldCompact(marking_type, stack_state)) return;
 
   is_cancelled_ = true;

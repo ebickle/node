@@ -7,7 +7,6 @@ const assert = require('assert');
 const { internalBinding } = require('internal/test/binding');
 const { UV_DIRENT_UNKNOWN } = internalBinding('constants').fs;
 const fs = require('fs');
-const path = require('path');
 
 const tmpdir = require('../common/tmpdir');
 const filename = 'foo';
@@ -15,7 +14,7 @@ const filename = 'foo';
 {
   // setup
   tmpdir.refresh();
-  fs.writeFileSync(path.join(tmpdir.path, filename), '');
+  fs.writeFileSync(tmpdir.resolve(filename), '');
 }
 // getDirents
 {
@@ -89,6 +88,11 @@ const filename = 'foo';
     common.mustCall((err, dirent) => {
       assert.strictEqual(err, null);
       assert.strictEqual(dirent.name, filenameBuffer);
+      common.expectWarning(
+        'DeprecationWarning',
+        'dirent.path is deprecated in favor of dirent.parentPath',
+        'DEP0178');
+      assert.deepStrictEqual(dirent.path, Buffer.from(tmpdir.resolve(`${filename}/`)));
     },
     ));
 }

@@ -17,14 +17,12 @@ calling `require('node:https')` will result in an error being thrown.
 
 When using CommonJS, the error thrown can be caught using try/catch:
 
-<!-- eslint-skip -->
-
 ```cjs
 let https;
 try {
   https = require('node:https');
 } catch (err) {
-  console.log('https support is disabled!');
+  console.error('https support is disabled!');
 }
 ```
 
@@ -42,7 +40,7 @@ let https;
 try {
   https = await import('node:https');
 } catch (err) {
-  console.log('https support is disabled!');
+  console.error('https support is disabled!');
 }
 ```
 
@@ -135,6 +133,17 @@ added: v0.1.90
 
 See [`server.close()`][] in the `node:http` module.
 
+### `server[Symbol.asyncDispose]()`
+
+<!-- YAML
+added: v20.4.0
+-->
+
+> Stability: 1 - Experimental
+
+Calls [`server.close()`][httpsServerClose] and returns a promise that
+fulfills when the server has closed.
+
 ### `server.closeAllConnections()`
 
 <!-- YAML
@@ -176,9 +185,14 @@ See [`server.maxHeadersCount`][] in the `node:http` module.
 
 <!-- YAML
 added: v14.11.0
+changes:
+  - version: v18.0.0
+    pr-url: https://github.com/nodejs/node/pull/41263
+    description: The default request timeout changed
+                 from no timeout to 300s (5 minutes).
 -->
 
-* {number} **Default:** `0`
+* {number} **Default:** `300000`
 
 See [`server.requestTimeout`][] in the `node:http` module.
 
@@ -236,7 +250,7 @@ const fs = require('node:fs');
 
 const options = {
   key: fs.readFileSync('test/fixtures/keys/agent2-key.pem'),
-  cert: fs.readFileSync('test/fixtures/keys/agent2-cert.pem')
+  cert: fs.readFileSync('test/fixtures/keys/agent2-cert.pem'),
 };
 
 https.createServer(options, (req, res) => {
@@ -253,7 +267,7 @@ const fs = require('node:fs');
 
 const options = {
   pfx: fs.readFileSync('test/fixtures/test_cert.pfx'),
-  passphrase: 'sample'
+  passphrase: 'sample',
 };
 
 https.createServer(options, (req, res) => {
@@ -280,7 +294,7 @@ changes:
 
 * `url` {string | URL}
 * `options` {Object | string | URL} Accepts the same `options` as
-  [`https.request()`][], with the `method` always set to `GET`.
+  [`https.request()`][], with the method set to GET by default.
 * `callback` {Function}
 
 Like [`http.get()`][] but for HTTPS.
@@ -313,10 +327,13 @@ changes:
   - version:
       - v19.0.0
     pr-url: https://github.com/nodejs/node/pull/43522
-    description: The agent now uses HTTP Keep-Alive by default.
+    description: The agent now uses HTTP Keep-Alive and a 5 second timeout by
+                 default.
 -->
 
-Global instance of [`https.Agent`][] for all HTTPS client requests.
+Global instance of [`https.Agent`][] for all HTTPS client requests. Diverges
+from a default [`https.Agent`][] configuration by having `keepAlive` enabled and
+a `timeout` of 5 seconds.
 
 ## `https.request(options[, callback])`
 
@@ -325,6 +342,10 @@ Global instance of [`https.Agent`][] for all HTTPS client requests.
 <!-- YAML
 added: v0.3.6
 changes:
+  - version: v22.4.0
+    pr-url: https://github.com/nodejs/node/pull/53329
+    description: The `clientCertEngine` option depends on custom engine
+                 support in OpenSSL which is deprecated in OpenSSL 3.
   - version:
       - v16.7.0
       - v14.18.0
@@ -360,7 +381,7 @@ changes:
 Makes a request to a secure web server.
 
 The following additional `options` from [`tls.connect()`][] are also accepted:
-`ca`, `cert`, `ciphers`, `clientCertEngine`, `crl`, `dhparam`, `ecdhCurve`,
+`ca`, `cert`, `ciphers`, `clientCertEngine` (deprecated), `crl`, `dhparam`, `ecdhCurve`,
 `honorCipherOrder`, `key`, `passphrase`, `pfx`, `rejectUnauthorized`,
 `secureOptions`, `secureProtocol`, `servername`, `sessionIdContext`,
 `highWaterMark`.
@@ -380,7 +401,7 @@ const options = {
   hostname: 'encrypted.google.com',
   port: 443,
   path: '/',
-  method: 'GET'
+  method: 'GET',
 };
 
 const req = https.request(options, (res) => {
@@ -407,7 +428,7 @@ const options = {
   path: '/',
   method: 'GET',
   key: fs.readFileSync('test/fixtures/keys/agent2-key.pem'),
-  cert: fs.readFileSync('test/fixtures/keys/agent2-cert.pem')
+  cert: fs.readFileSync('test/fixtures/keys/agent2-cert.pem'),
 };
 options.agent = new https.Agent(options);
 
@@ -426,7 +447,7 @@ const options = {
   method: 'GET',
   key: fs.readFileSync('test/fixtures/keys/agent2-key.pem'),
   cert: fs.readFileSync('test/fixtures/keys/agent2-cert.pem'),
-  agent: false
+  agent: false,
 };
 
 const req = https.request(options, (res) => {
@@ -566,4 +587,5 @@ headers: max-age=0; pin-sha256="WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18="; p
 [`tls.connect()`]: tls.md#tlsconnectoptions-callback
 [`tls.createSecureContext()`]: tls.md#tlscreatesecurecontextoptions
 [`tls.createServer()`]: tls.md#tlscreateserveroptions-secureconnectionlistener
+[httpsServerClose]: #serverclosecallback
 [sni wiki]: https://en.wikipedia.org/wiki/Server_Name_Indication
