@@ -11,39 +11,39 @@ const { fork } = require('node:child_process');
 const fixtures = require('../common/fixtures');
 
 const tests = [
-  'additional-ca', 
+  'additional-ca',
   'crl',
-  'pfx'
+  'pfx',
 ];
 
 const clientTest = process.argv[2];
 if (clientTest) {
-    const clientOptions = {
-      port: process.argv[3],
-      checkServerIdentity: common.mustCall()
-    };
+  const clientOptions = {
+    port: process.argv[3],
+    checkServerIdentity: common.mustCall()
+  };
 
-    switch (clientTest) {
-      case 'additional-ca':
-        clientOptions.secureContext = tls.createSecureContext();
-        clientOptions.secureContext.context.addCACert(
-          fixtures.readKey('ca1-cert.pem')
-        );
-        break;
-      case 'crl': 
-        clientOptions.crl = fixtures.readKey('ca2-crl.pem');
-        break;
-      case 'pfx':
-        clientOptions.pfx = fixtures.readKey('agent1.pfx');
-        clientOptions.passphrase = 'sample';
-        break;
-    }
+  switch (clientTest) {
+    case 'additional-ca':
+      clientOptions.secureContext = tls.createSecureContext();
+      clientOptions.secureContext.context.addCACert(
+        fixtures.readKey('ca1-cert.pem')
+      );
+      break;
+    case 'crl':
+      clientOptions.crl = fixtures.readKey('ca2-crl.pem');
+      break;
+    case 'pfx':
+      clientOptions.pfx = fixtures.readKey('agent1.pfx');
+      clientOptions.passphrase = 'sample';
+      break;
+  }
 
-    const client = tls.connect(clientOptions, common.mustCall(() => {
-      client.end('hi');
-    }));
+  const client = tls.connect(clientOptions, common.mustCall(() => {
+    client.end('hi');
+  }));
 } else {
-  for (let test of tests) {
+  for (const test of tests) {
     const serverOptions = {
       key: fixtures.readKey('agent3-key.pem'),
       cert: fixtures.readKey('agent3-cert.pem')
@@ -62,7 +62,7 @@ if (clientTest) {
 
       const args = [
         test,
-        server.address().port      
+        server.address().port,
       ];
 
       fork(__filename, args, { env }).on('exit', common.mustCall((status) => {
