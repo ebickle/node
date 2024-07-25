@@ -11,44 +11,53 @@ const { fork } = require('node:child_process');
 const fixtures = require('../common/fixtures');
 
 const tests = [
-  'additional-ca',
-  'crl',
-  'pfx',
+  {
+    get clientOptions() {
+      const secureContext = tls.createSecureContext();
+      secureContext.context.addCACert(
+        fixtures.readKey('ca1-cert.pem')
+      );
+
+      return {
+        secureContext
+      };
+    }
+  },
+  {
+    clientOptions: {
+      crl: fixtures.readKey('ca2-crl.pem')
+    }
+  },
+  {
+    clientOptions: {
+      pfx: fixtures.readKey('agent1.pfx'),
+      passphrase: 'sample'
+    }
+  },
 ];
 
-const clientTest = process.argv[2];
-if (clientTest) {
+if (process.argv[2]) {
+  const testNumber = parseInt(process.argv[2], 10);
+  assert(testNumber >= 0 && testNumber < tests.length);
+
+  const test = tests[testNumber];
+
   const clientOptions = {
+    ...test.clientOptions,
     port: process.argv[3],
     checkServerIdentity: common.mustCall()
   };
-
-  switch (clientTest) {
-    case 'additional-ca':
-      clientOptions.secureContext = tls.createSecureContext();
-      clientOptions.secureContext.context.addCACert(
-        fixtures.readKey('ca1-cert.pem')
-      );
-      break;
-    case 'crl':
-      clientOptions.crl = fixtures.readKey('ca2-crl.pem');
-      break;
-    case 'pfx':
-      clientOptions.pfx = fixtures.readKey('agent1.pfx');
-      clientOptions.passphrase = 'sample';
-      break;
-  }
 
   const client = tls.connect(clientOptions, common.mustCall(() => {
     client.end('hi');
   }));
 } else {
-  for (const test of tests) {
-    const serverOptions = {
-      key: fixtures.readKey('agent3-key.pem'),
-      cert: fixtures.readKey('agent3-cert.pem')
-    };
+  const serverOptions = {
+    key: fixtures.readKey('agent3-key.pem'),
+    cert: fixtures.readKey('agent3-cert.pem')
+  };
 
+  for (const testNumber in tests) {
     const server = tls.createServer(serverOptions, common.mustCall((socket) => {
       socket.end('bye');
       server.close();
@@ -61,7 +70,7 @@ if (clientTest) {
       };
 
       const args = [
-        test,
+        testNumber,
         server.address().port,
       ];
 
